@@ -18,7 +18,8 @@
   .num { font-variant-numeric: tabular-nums; font-feature-settings:"tnum"; }
   .wrap { max-width: 980px; margin:0 auto; padding:16px; }
   header { display:flex; align-items:center; justify-content:space-between; }
-  header h1 { font-size:1.35em; margin:0; display:flex; align-items:center; gap:9px; }
+  header h1 { font-size:1.35em; margin:0; display:flex; align-items:center; gap:9px;
+              user-select:none; -webkit-user-select:none; cursor:default; }
   header h1 .logo { width:34px; height:34px; }
   header .tools button { margin-left:6px; }
   button { cursor:pointer; border:1px solid var(--bd); background:#fff; border-radius:8px;
@@ -90,10 +91,10 @@
 <body>
 <div class="wrap">
   <header>
-    <h1><img src="/static/icons/icon-192.png" alt="" class="logo">관급자재 단가조회</h1>
+    <h1 onclick="tapTitle()" title=""><img src="/static/icons/icon-192.png" alt="" class="logo">관급자재 단가조회</h1>
     <div class="tools">
       <button onclick="toggleFont()">가🔎</button>
-      <button onclick="openAdmin()">🔒 관리자</button>
+      <button id="adminBtn" onclick="openAdmin()" style="display:none">🔒 관리자</button>
       <button onclick="alert(HELP)">도움말</button>
     </div>
   </header>
@@ -410,6 +411,20 @@ async function delNote(id){ if(!confirm('삭제할까요?'))return;
 function val(id){ return document.getElementById(id).value.trim()||null; }
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ── 관리자 버튼 숨김/표시 (제목 5번 클릭 또는 #admin 해시로 노출) ──
+let _tapCount = 0, _tapTimer = null;
+function tapTitle(){
+  _tapCount++;
+  clearTimeout(_tapTimer);
+  _tapTimer = setTimeout(()=>{ _tapCount = 0; }, 1500);
+  if(_tapCount >= 5){ _tapCount = 0; showAdminBtn(true); }
+}
+function showAdminBtn(notify){
+  document.getElementById('adminBtn').style.display = 'inline-block';
+  if(notify) toast('관리자 버튼이 나타났어요');
+}
+if(location.hash === '#admin') showAdminBtn(false);
 
 // ── 관리자 (인증키 관리) ──
 const adminDlg = document.getElementById('adminDlg');
