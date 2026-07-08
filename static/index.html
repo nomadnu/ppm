@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>관급자재 단가조회</title>
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#f5c400">
+<style>
+  :root { --fs: 15px; --bd:#d0d5dd; --bg:#f7f8fa; --card:#fff; --accent:#1a5cff;
+          --jb:#0a7d33; --ct:#c2410c; --mid:#7c3aed; --muted:#667085; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"맑은 고딕","Malgun Gothic",system-ui,sans-serif;
+         font-size:var(--fs); background:var(--bg); color:#1d2939; }
+  .num { font-variant-numeric: tabular-nums; font-feature-settings:"tnum"; }
+  .wrap { max-width: 980px; margin:0 auto; padding:16px; }
+  header { display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:1.35em; margin:0; display:flex; align-items:center; gap:9px; }
+  header h1 .logo { width:34px; height:34px; }
+  header .tools button { margin-left:6px; }
+  button { cursor:pointer; border:1px solid var(--bd); background:#fff; border-radius:8px;
+           padding:7px 12px; font-size:.95em; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .searchbar { display:flex; gap:8px; margin:14px 0 8px; }
+  .searchbar input { flex:1; padding:11px 12px; font-size:1.05em; border:1px solid var(--bd);
+                     border-radius:8px; }
+  .periods label { margin-right:14px; color:var(--muted); }
+  .panel { background:var(--card); border:1px solid var(--bd); border-radius:12px;
+           padding:14px 16px; margin-top:14px; }
+  .panel h2 { font-size:1.02em; margin:0 0 10px; display:flex; justify-content:space-between;
+              align-items:center; }
+  .banner { border:1px solid #f2c94c; background:#fffaf0; }
+  .banner .sup { margin:4px 0; }
+  .summary-grid { display:flex; gap:20px; flex-wrap:wrap; align-items:baseline; }
+  .summary-grid .big { font-size:1.5em; font-weight:700; }
+  .summary-grid .lbl { color:var(--muted); font-size:.85em; }
+  .delta.up { color:#c2410c; } .delta.down { color:#0a7d33; }
+  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .card { border:1px solid var(--bd); border-radius:10px; padding:12px; position:relative;
+          display:flex; flex-direction:column; gap:6px; }
+  .card.selected { border-color:var(--jb); box-shadow:0 0 0 2px #0a7d3333; }
+  .card .company { font-weight:700; font-size:1.05em; }
+  .card .price { font-size:1.35em; font-weight:700; }
+  .badges span { display:inline-block; font-size:.78em; padding:1px 7px; border-radius:20px;
+                 margin-right:4px; }
+  .b-jb { background:#e6f4ea; color:var(--jb); }
+  .b-ct { background:#fef0e6; color:var(--ct); }
+  .b-mid { background:#f0e9fc; color:var(--mid); }
+  .b-des { background:#e8f0fe; color:#1a5cff; font-weight:700; }
+  .b-prev { background:#eef1f6; color:var(--muted); }
+  .card.designated { border-color:var(--accent); box-shadow:0 0 0 2px #1a5cff22; }
+  .b-out { background:#fdecec; color:#b42318; }
+  .card .meta { font-size:.85em; color:var(--muted); }
+  .check { color:var(--jb); font-weight:700; }
+  table { width:100%; border-collapse:collapse; font-size:.9em; }
+  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid #eef0f3; white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; }
+  td.r, th.r { text-align:right; }
+  .tbl-scroll { overflow-x:auto; }
+  .hist-item { display:flex; align-items:center; gap:8px; padding:7px 0;
+               border-bottom:1px solid #eef0f3; font-size:.92em; }
+  .hist-item .grow { flex:1; }
+  .link { color:var(--accent); text-decoration:none; }
+  .muted { color:var(--muted); }
+  .disclaimer { color:var(--muted); font-size:.85em; margin-top:18px; text-align:center; }
+  .hint { color:var(--muted); font-size:.85em; }
+  .row-actions button { padding:3px 8px; font-size:.85em; }
+  dialog { border:none; border-radius:12px; padding:0; max-width:640px; width:92%; }
+  dialog .dlg-head { display:flex; justify-content:space-between; align-items:center;
+                     padding:14px 16px; border-bottom:1px solid var(--bd); }
+  dialog .dlg-body { padding:16px; max-height:70vh; overflow:auto; }
+  .note-form { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .note-form input { padding:7px; border:1px solid var(--bd); border-radius:6px; }
+  .note-form .full { grid-column:1/3; }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid #fff;
+          border-top-color:transparent; border-radius:50%; animation:sp .7s linear infinite;
+          vertical-align:-2px; margin-right:5px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+           background:#1d2939; color:#fff; padding:10px 16px; border-radius:8px;
+           font-size:.9em; opacity:0; transition:opacity .25s; z-index:50; }
+  .toast.show { opacity:1; }
+  @media(max-width:720px){ .cards{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><img src="/static/icons/icon-192.png" alt="" class="logo">관급자재 단가조회</h1>
+    <div class="tools">
+      <button onclick="toggleFont()">가🔎</button>
+      <button onclick="openNotes()">⚙ 공급처</button>
+      <button onclick="openAdmin()">🔒 관리자</button>
+      <button onclick="alert(HELP)">도움말</button>
+    </div>
+  </header>
+
+  <div class="searchbar">
+    <input id="q" placeholder="규격 입력: 레미콘 25-24-150" onkeydown="if(event.key==='Enter')doSearch()">
+    <button class="primary" id="btnSearch" onclick="doSearch()">조회</button>
+  </div>
+  <div class="periods">
+    조회기간:
+    <label><input type="radio" name="months" value="1">1개월</label>
+    <label><input type="radio" name="months" value="3">3개월</label>
+    <label><input type="radio" name="months" value="6" checked>6개월</label>
+    <label><input type="radio" name="months" value="12">12개월</label>
+    <span id="demoBadge" class="hint"></span>
+  </div>
+
+  <div id="result"></div>
+
+  <div class="panel" id="histPanel">
+    <h2>최근 조회 이력 <button onclick="loadHistory()">↻</button></h2>
+    <div id="histList" class="muted">불러오는 중…</div>
+  </div>
+
+  <p class="disclaimer">
+    ※ 본 자료는 조달청 계약단가 기준 <b>참고자료</b>이며, 단가 결정의 최종 판단은 담당자에게 있습니다.<br>
+    데이터는 전일(D-1) 기준일 수 있습니다. "선정"은 시스템 기록일 뿐 계약 행위가 아닙니다.
+  </p>
+</div>
+
+<!-- 공급처 메모 관리 -->
+<dialog id="notesDlg">
+  <div class="dlg-head"><b>지정 공급처 메모 관리</b><button onclick="notesDlg.close()">닫기</button></div>
+  <div class="dlg-body">
+    <div class="note-form">
+      <input id="nf_keyword" placeholder="품목 키워드 (예: 레미콘)">
+      <input id="nf_supplier" placeholder="공급처명">
+      <input id="nf_contact" placeholder="연락처 (선택)">
+      <input id="nf_url" placeholder="링크 (선택)">
+      <input id="nf_memo" class="full" placeholder="조달 방식 메모">
+      <input type="hidden" id="nf_id">
+      <div class="full"><button class="primary" onclick="saveNote()">저장</button>
+        <button onclick="resetNoteForm()">초기화</button></div>
+    </div>
+    <div id="notesList"></div>
+  </div>
+</dialog>
+
+<!-- 관리자 -->
+<dialog id="adminDlg">
+  <div class="dlg-head"><b>🔒 관리자</b><button onclick="adminDlg.close()">닫기</button></div>
+  <div class="dlg-body">
+    <!-- 로그인 -->
+    <div id="adminLogin">
+      <p class="muted">관리자 메뉴 진입 — 비밀번호를 입력하세요.</p>
+      <div class="note-form">
+        <input type="password" id="ad_pw" class="full" placeholder="관리자 비밀번호"
+               onkeydown="if(event.key==='Enter')adminLogin()">
+        <div class="full"><button class="primary" onclick="adminLogin()">진입</button></div>
+      </div>
+      <p id="ad_login_err" class="hint" style="color:#b42318"></p>
+    </div>
+
+    <!-- 패널 -->
+    <div id="adminPanel" style="display:none">
+      <div class="panel" style="margin-top:0">
+        <h2>현재 상태</h2>
+        <div id="ad_status" class="muted">불러오는 중…</div>
+      </div>
+
+      <div class="panel">
+        <h2>조달청 인증키</h2>
+        <div class="note-form">
+          <input type="password" id="ad_key" class="full"
+                 placeholder="Decoding 인증키 붙여넣기 (Encoding 키 아님)">
+          <label class="full"><input type="checkbox" id="ad_demo">
+            데모 모드 사용 (합성 데이터 — 키 검증 전 UI 확인용)</label>
+          <div class="full">
+            <button class="primary" onclick="adminSave()">저장</button>
+            <button onclick="adminProbe()">연결 진단(Probe)</button>
+          </div>
+        </div>
+        <p class="hint">· 인증키는 이 서버의 로컬 DB에 저장됩니다(코드·저장소 미포함).<br>
+          · <b>반드시 Decoding 키</b>를 넣으세요. Encoding 키는 이중 인코딩으로 인증 실패합니다.<br>
+          · 키를 저장하고 데모 모드를 끄면 실제 조달청 데이터로 조회됩니다.</p>
+        <div id="ad_probe"></div>
+      </div>
+
+      <div class="panel">
+        <h2>비밀번호 변경</h2>
+        <div class="note-form">
+          <input type="password" id="ad_cur" placeholder="현재 비밀번호">
+          <input type="password" id="ad_new" placeholder="새 비밀번호 (4자 이상)">
+          <div class="full"><button onclick="adminChangePw()">변경</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const HELP = `[관급자재 단가조회 도움말]
+1) 규격을 입력해 조회 → 최저·중간·최고가와 결과 건수 확인
+2) '중간가 후보 3선'에서 원본(나라장터 확인 ↗)을 검증한 뒤 1개 선정
+3) 후보가 마음에 안 들면 전체 목록에서 직접 선정도 가능
+4) 선정 후 [이미지 저장]으로 조서 붙임용 PNG, [CSV 내려받기]로 기안 근거 확보
+5) 최근 조회 이력에서 클릭 한 번으로 재조회 (📌 고정 가능)
+후보 기준: 중간가 ±5% · [전북+인증]→[전북]→[인증]→[해당없음] 순 · 업체중복제거 상위3`;
+
+let STATE = { data:null, selection:null };
+
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg;
+  t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2600); }
+function fmt(n){ return (n==null||n==='')?'-':Number(n).toLocaleString('ko-KR'); }
+function months(){ return document.querySelector('input[name=months]:checked').value; }
+function toggleFont(){ const r=document.documentElement;
+  r.style.setProperty('--fs', getComputedStyle(r).getPropertyValue('--fs').trim()==='15px'?'17px':'15px'); }
+
+async function doSearch(reQ){
+  const q = reQ ?? document.getElementById('q').value.trim();
+  if(!q){ toast('규격을 입력하세요'); return; }
+  document.getElementById('q').value = q;
+  const btn=document.getElementById('btnSearch');
+  btn.disabled=true; btn.innerHTML='<span class="spin"></span>조회 중';
+  try{
+    const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&months=${months()}`);
+    if(!r.ok) throw new Error('검색 실패');
+    STATE.data = await r.json(); STATE.selection=null;
+    render();
+    loadHistory();
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; btn.textContent='조회'; }
+}
+
+function badge(it){
+  let h='';
+  if(it.isDesignated) h+='<span class="b-des">🏢지정공급처</span>';
+  if(it.isJeonbuk) h+='<span class="b-jb">📍전북</span>';
+  if(it.isCertified) h+='<span class="b-ct">✅인증</span>';
+  if(it.nearMedian) h+='<span class="b-mid">📊중간가 인접</span>';
+  if(it.isOutlier) h+='<span class="b-out">⚠이상치 가능</span>';
+  return h;
+}
+
+function render(){
+  const d = STATE.data; const s = d.summary; const el = document.getElementById('result');
+  document.getElementById('demoBadge').textContent = d.diagnostics.demoMode ? '· 데모 모드 (합성 데이터)' : '';
+
+  let html = '';
+
+  // (지정 공급처 안내 배너는 표시하지 않음 — 지정공급처는 후보 카드의 🏢 배지로 표기)
+
+  // 경고
+  (d.diagnostics.warnings||[]).forEach(w=>{ html += `<div class="panel hint">⚠ ${esc(w)}</div>`; });
+
+  // 요약 (F2)
+  html += `<div class="panel"><h2>요약</h2><div class="summary-grid">
+    <div><div class="lbl">결과</div><div class="big num">${s.count}건</div></div>
+    <div><div class="lbl">최저</div><div class="big num">${fmt(s.min)}</div></div>
+    <div><div class="lbl">중간가</div><div class="big num" style="color:var(--mid)">${fmt(s.median)}</div></div>
+    <div><div class="lbl">최고</div><div class="big num">${fmt(s.max)}</div></div>
+    <div><div class="lbl">단위</div><div class="big">${esc(s.unit||'원')}</div></div>`;
+  if(s.prevMedian){
+    const diff = s.median - s.prevMedian; const pct = (diff/s.prevMedian*100).toFixed(1);
+    const cls = diff>=0?'up':'down'; const arw = diff>=0?'▲':'▼';
+    html += `<div><div class="lbl">지난 조회(${esc(s.prevSearchedAt||'')}) 대비</div>
+      <div class="delta ${cls} num">${arw}${fmt(Math.abs(diff))}원 (${diff>=0?'+':''}${pct}%)</div></div>`;
+  }
+  html += `</div></div>`;
+
+  // 후보 3선 (F8)
+  if(d.candidates && d.candidates.length){
+    html += `<div class="panel"><h2>중간가 후보 3선 — 1개를 선정하세요
+      <button id="btnImg" onclick="saveImage()" disabled>🖼 이미지 저장</button></h2><div class="cards">`;
+    d.candidates.forEach(c=>{
+      const prev = (s.prevSelected && c.company===s.prevSelected) ? '<span class="b-prev">지난 회차 선정</span>' : '';
+      html += `<div class="card${c.isDesignated?' designated':''}" id="card-${c.rank}">
+        <div class="badges">${badge(c)}${prev}</div>
+        <div class="company">${esc(c.company||'-')}</div>
+        <div class="price num">${fmt(c.price)}원</div>
+        <div class="meta">${esc(c.spec||'')} · ${esc(c.region||'')}<br>${esc(c.contractDate||'')} · ${esc(c.source||'')}</div>
+        ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank">나라장터 확인 ↗</a>`:''}
+        <button class="primary" onclick='selectItem(${JSON.stringify(c).replace(/'/g,"&#39;")}, ${c.rank})'>이 업체로 선정</button>
+      </div>`;
+    });
+    html += `</div><div class="hint">후보 기준: 중간가 ±5% · [전북+인증]→[전북]→[인증]→[해당없음] 순 · 업체중복제거 상위3</div></div>`;
+  }
+
+  // 전체 결과 (F4)
+  html += `<div class="panel"><h2>전체 결과 목록 (참고)
+    <button onclick="exportCsv()">CSV 내려받기</button></h2><div class="tbl-scroll"><table>
+    <tr><th>배지</th><th>품목</th><th>규격</th><th class="r">단가</th><th>단위</th>
+    <th>업체명</th><th>소재지</th><th>계약일</th><th>출처</th><th>검증</th><th></th></tr>`;
+  d.items.forEach((it,i)=>{
+    html += `<tr><td>${badge(it)}</td><td>${esc(it.name)}</td><td>${esc(it.spec)}</td>
+      <td class="r num">${fmt(it.price)}</td><td>${esc(it.unit)}</td><td>${esc(it.company)}</td>
+      <td>${esc(it.region)}</td><td>${esc(it.contractDate||'')}</td><td>${esc(it.source)}</td>
+      <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank">확인↗</a>`:''}</td>
+      <td class="row-actions"><button onclick='selectItem(${JSON.stringify({...it,itemRef:i}).replace(/'/g,"&#39;")}, null)'>선정</button></td></tr>`;
+  });
+  html += `</table></div></div>`;
+
+  el.innerHTML = html;
+}
+
+async function selectItem(item, rank){
+  const d = STATE.data;
+  const body = { company:item.company, price:item.price, spec:item.spec,
+                 verifyUrl:item.verifyUrl, itemRef:(item.itemRef ?? null) };
+  try{
+    const r = await fetch(`/api/history/${d.historyId}/select`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if(!r.ok) throw new Error('선정 기록 실패');
+    STATE.selection = item;
+    document.querySelectorAll('.card').forEach(c=>c.classList.remove('selected'));
+    if(rank){ const c=document.getElementById('card-'+rank); if(c) c.classList.add('selected'); }
+    const bi=document.getElementById('btnImg'); if(bi) bi.disabled=false;
+    toast(`선정 완료: ${item.company} (${new Date().toLocaleString('ko-KR')})`);
+    loadHistory();
+  }catch(e){ toast(e.message); }
+}
+
+async function saveImage(){
+  if(!STATE.selection){ toast('먼저 후보를 선정하세요'); return; }
+  const bi=document.getElementById('btnImg'); bi.disabled=true; bi.innerHTML='<span class="spin"></span>저장 중';
+  try{
+    const it = STATE.selection;
+    const body = { name:it.name||STATE.data.query.split(' ')[0], company:it.company, spec:it.spec,
+      price:it.price, region:it.region, source:it.source, contractDate:it.contractDate,
+      isJeonbuk:!!it.isJeonbuk, isCertified:!!it.isCertified, verifyUrl:it.verifyUrl };
+    const r = await fetch('/api/image', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if(!r.ok) throw new Error('이미지 생성 실패');
+    const note = r.headers.get('X-Capture-Note');
+    if(note) toast(decodeURIComponent(note));
+    downloadBlob(await r.blob(), filenameFrom(r, 'png'));
+  }catch(e){ toast(e.message); }
+  finally{ bi.disabled=false; bi.textContent='🖼 이미지 저장'; }
+}
+
+async function exportCsv(){
+  const d = STATE.data;
+  const body = { query:d.query, months:d.months, summary:d.summary,
+    supplierNotes:d.supplierNotes, candidates:d.candidates, items:d.items,
+    selection: STATE.selection };
+  try{
+    const r = await fetch('/api/export', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if(!r.ok) throw new Error('CSV 생성 실패');
+    downloadBlob(await r.blob(), filenameFrom(r, 'csv'));
+  }catch(e){ toast(e.message); }
+}
+
+function filenameFrom(r, ext){
+  const cd = r.headers.get('Content-Disposition')||'';
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : `download.${ext}`;
+}
+function downloadBlob(blob, name){
+  const u = URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u);
+}
+
+// ── 이력 (F6) ──
+async function loadHistory(){
+  const r = await fetch('/api/history?limit=20');
+  const rows = await r.json();
+  const el = document.getElementById('histList');
+  if(!rows.length){ el.innerHTML='<span class="muted">이력이 없습니다</span>'; return; }
+  el.innerHTML = rows.map(h=>{
+    const sel = h.sel_company ? ` · 선정:<b>${esc(h.sel_company)}</b> ${fmt(h.sel_price)}원` : '';
+    return `<div class="hist-item">
+      <button title="고정" onclick="pinHist(${h.id})">${h.pinned?'📌':'☆'}</button>
+      <span class="grow"><b>${esc(h.query)}</b> · ${h.months}개월 · ${h.result_cnt||0}건 ·
+        중간가 <span class="num">${fmt(h.median_prc)}</span>원${sel}
+        <span class="muted"> · ${esc((h.searched_at||'').slice(0,10))}</span></span>
+      <button onclick="doSearch('${esc(h.query)}')">재조회</button>
+      <button onclick="delHist(${h.id})">🗑</button>
+    </div>`;
+  }).join('');
+}
+async function pinHist(id){ await fetch(`/api/history/${id}/pin`,{method:'PATCH'}); loadHistory(); }
+async function delHist(id){ if(!confirm('이력을 삭제할까요?'))return;
+  await fetch(`/api/history/${id}`,{method:'DELETE'}); loadHistory(); }
+
+// ── 공급처 메모 관리 (F7) ──
+const notesDlg = document.getElementById('notesDlg');
+async function openNotes(){ await loadNotes(); notesDlg.showModal(); }
+async function loadNotes(){
+  const r = await fetch('/api/notes'); const rows = await r.json();
+  document.getElementById('notesList').innerHTML = rows.map(n=>`
+    <div class="hist-item"><span class="grow"><b>${esc(n.keyword)}</b> → ${esc(n.supplier)}
+      ${n.contact?' · ☎'+esc(n.contact):''}
+      <div class="muted">${esc(n.memo||'')} <span class="hint">(수정 ${esc((n.updated_at||'').slice(0,10))})</span></div></span>
+      <button onclick='editNote(${JSON.stringify(n).replace(/'/g,"&#39;")})'>수정</button>
+      <button onclick="delNote(${n.id})">🗑</button></div>`).join('') || '<span class="muted">메모 없음</span>';
+}
+function resetNoteForm(){ ['id','keyword','supplier','contact','url','memo'].forEach(k=>document.getElementById('nf_'+k).value=''); }
+function editNote(n){ document.getElementById('nf_id').value=n.id;
+  ['keyword','supplier','contact','url','memo'].forEach(k=>document.getElementById('nf_'+k).value=n[k]||''); }
+async function saveNote(){
+  const id=document.getElementById('nf_id').value;
+  const body={ keyword:val('nf_keyword'), supplier:val('nf_supplier'), contact:val('nf_contact'),
+    url:val('nf_url'), memo:val('nf_memo') };
+  if(!body.keyword||!body.supplier){ toast('키워드와 공급처명은 필수'); return; }
+  const url = id?`/api/notes/${id}`:'/api/notes'; const method = id?'PUT':'POST';
+  await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  resetNoteForm(); loadNotes(); toast('저장됨');
+}
+async function delNote(id){ if(!confirm('삭제할까요?'))return;
+  await fetch(`/api/notes/${id}`,{method:'DELETE'}); loadNotes(); }
+function val(id){ return document.getElementById(id).value.trim()||null; }
+
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ── 관리자 (인증키 관리) ──
+const adminDlg = document.getElementById('adminDlg');
+function adminToken(){ return sessionStorage.getItem('ADMIN_TOKEN'); }
+async function adminFetch(url, opts={}){
+  opts.headers = Object.assign({'X-Admin-Token': adminToken()||''}, opts.headers||{});
+  const r = await fetch(url, opts);
+  if(r.status===401){ sessionStorage.removeItem('ADMIN_TOKEN'); showAdminLogin(); throw new Error('관리자 인증 만료 — 다시 로그인하세요'); }
+  return r;
+}
+function showAdminLogin(){ document.getElementById('adminLogin').style.display='block';
+  document.getElementById('adminPanel').style.display='none'; }
+function showAdminPanel(){ document.getElementById('adminLogin').style.display='none';
+  document.getElementById('adminPanel').style.display='block'; loadAdminStatus(); }
+
+function openAdmin(){
+  document.getElementById('ad_login_err').textContent='';
+  document.getElementById('ad_pw').value='';
+  if(adminToken()) showAdminPanel(); else showAdminLogin();
+  adminDlg.showModal();
+}
+async function adminLogin(){
+  const pw = document.getElementById('ad_pw').value;
+  try{
+    const r = await fetch('/api/admin/login',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pw})});
+    if(!r.ok){ document.getElementById('ad_login_err').textContent='비밀번호가 올바르지 않습니다'; return; }
+    const d = await r.json(); sessionStorage.setItem('ADMIN_TOKEN', d.token);
+    showAdminPanel();
+  }catch(e){ toast(e.message); }
+}
+async function loadAdminStatus(){
+  try{
+    const r = await adminFetch('/api/admin/settings'); const d = await r.json();
+    document.getElementById('ad_status').innerHTML =
+      `데이터 소스: <b style="color:${d.isDemo?'#c2410c':'#0a7d33'}">${d.isDemo?'데모 (합성 데이터)':'실 조달청 API'}</b><br>`+
+      `인증키: ${d.hasKey?('설정됨 <span class="num">'+esc(d.maskedKey)+'</span>'):'<span style="color:#b42318">미설정</span>'}<br>`+
+      `데모 플래그: ${d.demoFlag?'ON':'OFF'}`;
+    document.getElementById('ad_demo').checked = d.demoFlag;
+    document.getElementById('ad_key').value='';
+  }catch(e){ /* 401 처리됨 */ }
+}
+async function adminSave(){
+  const key = document.getElementById('ad_key').value.trim();
+  const demo = document.getElementById('ad_demo').checked;
+  const body = { demoMode: demo };
+  if(key) body.serviceKey = key;          // 비어있으면 키 변경 안 함
+  try{
+    await adminFetch('/api/admin/settings',{method:'PUT',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    toast('저장됨'); loadAdminStatus();
+  }catch(e){ toast(e.message); }
+}
+async function adminProbe(){
+  const box = document.getElementById('ad_probe');
+  box.innerHTML = '<span class="spin"></span> 진단 중…';
+  try{
+    const r = await adminFetch('/api/probe'); const d = await r.json();
+    box.innerHTML = '<div class="tbl-scroll"><table><tr><th>서비스</th><th>역할</th><th>상태</th><th>오퍼레이션</th><th>파라미터</th><th>비고</th></tr>'+
+      d.report.map(x=>`<tr><td>${esc(x.service)}</td><td class="hint">${esc(x.role||'')}</td>
+        <td style="color:${x.status==='OK'?'#0a7d33':(x.status==='FAIL'?'#b42318':'#667085')}"><b>${esc(x.status)}</b></td>
+        <td>${esc(x.operation)}</td><td>${esc(x.queryParam)}</td><td class="hint">${esc(x.note)}</td></tr>`).join('')+
+      '</table></div>';
+    box.insertAdjacentHTML('beforeend','<p class="hint">실검색엔 핵심(MVP) 2종만 사용 · 보조/확장 3종은 진단 대상(오퍼레이션명 확정용)</p>');
+  }catch(e){ box.innerHTML='<span class="hint" style="color:#b42318">진단 실패: '+esc(e.message)+'</span>'; }
+}
+async function adminChangePw(){
+  const cur = document.getElementById('ad_cur').value, nw = document.getElementById('ad_new').value;
+  try{
+    const r = await adminFetch('/api/admin/password',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({current:cur,new:nw})});
+    if(!r.ok){ const e=await r.json(); throw new Error(e.detail||'변경 실패'); }
+    document.getElementById('ad_cur').value=''; document.getElementById('ad_new').value='';
+    toast('비밀번호가 변경되었습니다');
+  }catch(e){ toast(e.message); }
+}
+
+loadHistory();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# 관급자재 단가조회 — 배포/실행 의존성 (경량)
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+python-dotenv>=1.0
+Pillow>=10.2
+
+# (선택) 이미지 저장(F9)에서 나라장터 상세 페이지 실캡처를 쓰려면 아래를 설치.
+#   pip install playwright && python -m playwright install chromium
+# 미설치 시 F9는 자체 렌더링 카드로 자동 폴백하므로 배포엔 불필요.
+# playwright>=1.42

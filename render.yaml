@@ -1,0 +1,20 @@
+# Render 배포 설정 (동료 공유용 지속 URL)
+# 사용법: GitHub에 이 저장소를 올린 뒤 Render → New → Blueprint 로 연결.
+services:
+  - type: web
+    name: ppm-danga
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      # 인증키는 대시보드에서 직접 입력(sync:false) — 코드/깃에 안 올라감
+      - key: SERVICE_KEY
+        sync: false
+      - key: DEMO_MODE
+        value: "0"
+      # 관리자 비밀번호도 대시보드에서 설정 권장 (기본 5968에서 변경)
+      - key: ADMIN_PASSWORD
+        sync: false
