@@ -25,8 +25,10 @@ DB_PATH: Path = ROOT / os.getenv("DB_PATH", "ppm.db")
 # 서비스별 base 경로는 procurement.py 의 후보 목록에서 관리한다.
 API_GATEWAY = "http://apis.data.go.kr"
 
-# 나라장터 종합쇼핑몰 (검증 링크·캡처 대상)
-G2B_SHOPPING_BASE = "https://shopping.g2b.go.kr"
+# 나라장터 종합쇼핑몰 (구 도메인 — 캡처 참고용, 현재 로그인 필요)
+G2B_SHOPPING_BASE = "https://shop.g2b.go.kr"
+# 나라장터 물품목록정보시스템 품목검색 (공개, 로그인 불필요) — 검증 링크의 본체
+G2B_GOODS_SEARCH = "https://goods.g2b.go.kr/search/productSearch.do"
 
 # HTTP 타임아웃(초)
 HTTP_TIMEOUT = 12.0

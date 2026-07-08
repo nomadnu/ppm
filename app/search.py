@@ -9,7 +9,7 @@ import statistics
 import urllib.parse
 from typing import Any, Optional
 
-from .config import G2B_SHOPPING_BASE
+from .config import G2B_GOODS_SEARCH
 
 OUTLIER_RATIO = 0.70   # 중앙값 ±70% 벗어나면 이상치 가능
 NEAR_MEDIAN_RATIO = 0.05  # 후보군: 중간가 ±5%
@@ -208,21 +208,25 @@ def sample_warning(count: int) -> Optional[str]:
 def build_verify_url(item: dict[str, Any], raw: dict[str, Any]) -> str:
     """1) 응답 URL 필드 → 2) 물품식별번호 상세검색 → 3) 품목명+규격 검색 폴백.
 
-    ※ 차세대 나라장터 종합쇼핑몰 상세페이지는 로그인(SSO) 필수라 공개 딥링크가 불가.
-      그래서 로그인 없이 열리는 '상품이미지'(조달청 서버 공개 URL)를 우선 사용한다.
+    나라장터 물품목록정보시스템(goods.g2b.go.kr)의 공개 품목검색으로 연결한다.
+    로그인 없이 열리며, 물품식별번호로 실물이 나라장터에 등록돼 있음을 확인('인증샷')할 수 있다.
+    (종합쇼핑몰 shop.g2b.go.kr 상세는 SSO 로그인 필수라 공개 딥링크 불가.)
     """
-    # 1) 상품이미지(로그인 없이 열림) — 실질적으로 확인 가능한 유일한 공개 링크
-    img = item.get("imageUrl")
-    if img and str(img).startswith("http"):
-        return img
+    # 1) 물품식별번호로 정확히 그 물건 조회 (총 1건)
+    ident = _first_by_keys(raw, ("prdctidntno", "goodsidntfcno", "idntfcno"))
+    if ident and str(ident).strip():
+        return f"{G2B_GOODS_SEARCH}?searchGoodsIdntfcNo={urllib.parse.quote(str(ident).strip())}"
 
-    # 2) 그 외 공개 url/link 필드 (이미지·첨부 제외 조건은 완화 — 첨부 규격서도 공개됨)
-    for k, v in raw.items():
-        lk = k.lower()
-        if ("url" in lk or "link" in lk) and isinstance(v, str) and v.startswith("http"):
-            return v
+    # 2) 물품분류번호로 조회 (해당 품목군)
+    clsfc = _first_by_keys(raw, ("prdctclsfcno", "goodsclsfcno", "clsfcno"))
+    if clsfc and str(clsfc).strip():
+        return f"{G2B_GOODS_SEARCH}?searchGoodsClsfcNo={urllib.parse.quote(str(clsfc).strip())}"
 
-    return ""   # 공개 링크 없음 → 프론트에서 링크 미표시
+    # 3) 품명으로 조회 (폴백)
+    nm = (item.get("name") or "").strip()
+    if nm:
+        return f"{G2B_GOODS_SEARCH}?searchGoodsNm={urllib.parse.quote(nm)}"
+    return ""
 
 
 def _first_by_keys(raw: dict[str, Any], key_substrs: tuple[str, ...]) -> Optional[str]:
