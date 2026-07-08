@@ -208,26 +208,21 @@ def sample_warning(count: int) -> Optional[str]:
 def build_verify_url(item: dict[str, Any], raw: dict[str, Any]) -> str:
     """1) 응답 URL 필드 → 2) 물품식별번호 상세검색 → 3) 품목명+규격 검색 폴백.
 
-    딥링크는 개편에 취약하므로 검색 결과 링크를 기본으로 한다(설계 F4).
+    ※ 차세대 나라장터 종합쇼핑몰 상세페이지는 로그인(SSO) 필수라 공개 딥링크가 불가.
+      그래서 로그인 없이 열리는 '상품이미지'(조달청 서버 공개 URL)를 우선 사용한다.
     """
-    # 1) 원본 응답에 url/link 성격 필드가 있으면 그대로
-    #    (단, 이미지·첨부파일 URL은 검증용 페이지가 아니므로 제외)
+    # 1) 상품이미지(로그인 없이 열림) — 실질적으로 확인 가능한 유일한 공개 링크
+    img = item.get("imageUrl")
+    if img and str(img).startswith("http"):
+        return img
+
+    # 2) 그 외 공개 url/link 필드 (이미지·첨부 제외 조건은 완화 — 첨부 규격서도 공개됨)
     for k, v in raw.items():
         lk = k.lower()
-        if ("url" in lk or "link" in lk) and not any(x in lk for x in ("img", "atch", "file", "photo")) \
-                and isinstance(v, str) and v.startswith("http"):
+        if ("url" in lk or "link" in lk) and isinstance(v, str) and v.startswith("http"):
             return v
 
-    # 2) 물품식별번호 기반 검색 링크
-    ident = _first_by_keys(raw, ("prdctidntno", "prdctclsfcno", "idntno"))
-    if ident:
-        q = urllib.parse.quote(str(ident))
-        return f"{G2B_SHOPPING_BASE}/pt/search/search.do?searchWord={q}"
-
-    # 3) 품목명 + 규격 키워드 검색 (폴백)
-    kw = " ".join(x for x in (item.get("name"), item.get("spec")) if x)
-    q = urllib.parse.quote(kw.strip() or (item.get("name") or ""))
-    return f"{G2B_SHOPPING_BASE}/pt/search/search.do?searchWord={q}"
+    return ""   # 공개 링크 없음 → 프론트에서 링크 미표시
 
 
 def _first_by_keys(raw: dict[str, Any], key_substrs: tuple[str, ...]) -> Optional[str]:

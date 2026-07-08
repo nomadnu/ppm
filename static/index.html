@@ -200,7 +200,9 @@
 <script>
 const HELP = `[관급자재 단가조회 도움말]
 1) 규격을 입력해 조회 → 최저·중간·최고가와 결과 건수 확인
-2) '중간가 후보 3선'에서 원본(나라장터 확인 ↗)을 검증한 뒤 1개 선정
+2) '중간가 후보 3선'에서 상품이미지(🖼)로 품목을 확인한 뒤 1개 선정
+   ※ 나라장터 종합쇼핑몰 상세페이지는 로그인이 필요해 앱에서 바로 열 수 없습니다.
+     대신 로그인 없이 열리는 조달청 상품이미지를 링크로 제공합니다.
 3) 후보가 마음에 안 들면 전체 목록에서 직접 선정도 가능
 4) 선정 후 [이미지 저장]으로 조서 붙임용 PNG, [CSV 내려받기]로 기안 근거 확보
 5) 최근 조회 이력에서 클릭 한 번으로 재조회 (📌 고정 가능)
@@ -278,7 +280,7 @@ function render(){
         <div class="company">${esc(c.company||'-')}</div>
         <div class="price num">${fmt(c.price)}원</div>
         <div class="meta">${esc(c.spec||'')} · ${esc(c.region||'')}<br>${esc(c.contractDate||'')} · ${esc(c.source||'')}</div>
-        ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank">나라장터 확인 ↗</a>`:''}
+        ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank">🖼 상품이미지 ↗</a>`:''}
         <button class="primary" onclick='selectItem(${JSON.stringify(c).replace(/'/g,"&#39;")}, ${c.rank})'>이 업체로 선정</button>
       </div>`;
     });
@@ -294,7 +296,7 @@ function render(){
     html += `<tr><td>${badge(it)}</td><td>${esc(it.name)}</td><td>${esc(it.spec)}</td>
       <td class="r num">${fmt(it.price)}</td><td>${esc(it.unit)}</td><td>${esc(it.company)}</td>
       <td>${esc(it.region)}</td><td>${esc(it.contractDate||'')}</td><td>${esc(it.source)}</td>
-      <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank">확인↗</a>`:''}</td>
+      <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank">이미지↗</a>`:''}</td>
       <td class="row-actions"><button onclick='selectItem(${JSON.stringify({...it,itemRef:i}).replace(/'/g,"&#39;")}, null)'>선정</button></td></tr>`;
   });
   html += `</table></div></div>`;
