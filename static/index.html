@@ -337,7 +337,8 @@ function render(){
         <div class="price num">${fmt(c.price)}원</div>
         <div class="meta">${esc(c.spec||'')} · ${esc(c.region||'')}<br>${esc(c.contractDate||'')} · ${esc(c.source||'')}</div>
         <div class="verify-row">
-          ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank" rel="noopener">나라장터 확인 ↗</a>`:''}
+          ${c.goodsUrl?`<a class="link" href="${esc(c.goodsUrl)}" target="_blank" rel="noopener">나라장터 확인 ↗</a>`:''}
+          ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank" rel="noopener" title="가격 상세 — 거래정지 품목은 안 열릴 수 있어요">쇼핑몰 상세 ↗</a>`:''}
           ${c.identNo?`<button class="copybtn" onclick="copyIdent('${esc(c.identNo)}')">📋 번호복사</button>`:''}
         </div>
         <button class="primary" onclick='selectItem(${JSON.stringify(c).replace(/'/g,"&#39;")}, ${c.rank})'>이 업체로 선정</button>
@@ -355,7 +356,7 @@ function render(){
     html += `<tr><td>${badge(it)}</td><td>${esc(it.name)}</td><td>${esc(it.spec)}</td>
       <td class="r num">${fmt(it.price)}</td><td>${esc(it.unit)}</td><td>${esc(it.company)}</td>
       <td>${esc(it.region)}</td><td>${esc(it.contractDate||'')}</td><td>${esc(it.source)}</td>
-      <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank" rel="noopener">확인↗</a>`:''}${it.identNo?` <button class="copybtn" onclick="copyIdent('${esc(it.identNo)}')" title="물품식별번호 복사">📋</button>`:''}</td>
+      <td>${it.goodsUrl?`<a class="link" href="${esc(it.goodsUrl)}" target="_blank" rel="noopener">확인↗</a>`:''}${it.identNo?` <button class="copybtn" onclick="copyIdent('${esc(it.identNo)}')" title="물품식별번호 복사">📋</button>`:''}</td>
       <td class="row-actions"><button onclick='selectItem(${JSON.stringify({...it,itemRef:i}).replace(/'/g,"&#39;")}, null)'>선정</button></td></tr>`;
   });
   html += `</table></div></div>`;

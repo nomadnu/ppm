@@ -16,7 +16,7 @@ from typing import Any, Optional
 import httpx
 
 from . import config, runtime
-from .search import build_verify_url, is_jeonbuk
+from .search import build_goods_url, build_verify_url, is_jeonbuk
 
 # ── 오퍼레이션 후보 목록 (Probe 대상, 5종) ────────────────────────
 # 각 항목: 표시명·역할·경로·오퍼레이션명 후보·검색 파라미터명 후보.
@@ -169,7 +169,8 @@ def normalize_item(raw: dict[str, Any], source: str, warnings: list[str]) -> dic
         "imageUrl": _find(raw, ("prdctImgUrl", "ImgUrl")) or "",
         "identNo": _find(raw, ("prdctIdntNo", "goodsIdntfcNo")) or "",
     }
-    item["verifyUrl"] = build_verify_url(item, raw)
+    item["verifyUrl"] = build_verify_url(item, raw)   # 쇼핑몰 상세 딥링크(가격, 거래정지 시 막힘)
+    item["goodsUrl"] = build_goods_url(raw)            # 목록정보시스템(항상 실물 확인)
     return item
 
 

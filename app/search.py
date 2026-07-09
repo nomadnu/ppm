@@ -184,6 +184,7 @@ def _cand_card(it: dict[str, Any], idx: int, rank: int) -> dict[str, Any]:
         "source": it.get("source"),
         "itemRef": idx,
         "verifyUrl": it.get("verifyUrl"),
+        "goodsUrl": it.get("goodsUrl"),
         "identNo": it.get("identNo"),
     }
 
@@ -272,6 +273,15 @@ def build_detail_url(cntrct_no: str) -> Optional[str]:
         return None
     p1, p2, p3 = parts
     return DETAIL_LINK_BASE + p1 + p2.zfill(2) + p3.zfill(7)
+
+
+def build_goods_url(raw: dict[str, Any]) -> str:
+    """물품목록정보시스템(공개) 검색 링크 — 물품식별번호로 '실물 존재'를 항상 확인.
+    거래정지·상품코드미존재로 상세가 막혀도 이 링크는 총 1건으로 뜬다."""
+    ident = _first_by_keys(raw, ("prdctidntno", "goodsidntfcno", "idntfcno"))
+    if ident and str(ident).strip():
+        return f"{G2B_GOODS_SEARCH}?searchGoodsIdntfcNo={urllib.parse.quote(str(ident).strip())}"
+    return ""
 
 
 def build_verify_url(item: dict[str, Any], raw: dict[str, Any]) -> str:
