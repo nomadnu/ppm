@@ -167,6 +167,7 @@ def normalize_item(raw: dict[str, Any], source: str, warnings: list[str]) -> dic
         "contractDate": contract_date,
         "source": source,
         "imageUrl": _find(raw, ("prdctImgUrl", "ImgUrl")) or "",
+        "identNo": _find(raw, ("prdctIdntNo", "goodsIdntfcNo")) or "",
     }
     item["verifyUrl"] = build_verify_url(item, raw)
     return item

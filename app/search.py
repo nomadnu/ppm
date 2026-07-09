@@ -130,6 +130,7 @@ def _cand_card(it: dict[str, Any], idx: int, rank: int) -> dict[str, Any]:
         "source": it.get("source"),
         "itemRef": idx,
         "verifyUrl": it.get("verifyUrl"),
+        "identNo": it.get("identNo"),
     }
 
 
@@ -203,29 +204,46 @@ def sample_warning(count: int) -> Optional[str]:
     return None
 
 
-# ── 검증 링크 (F4) ────────────────────────────────────────────────
+# ── 검증 링크 (F4, v0.5.1) ────────────────────────────────────────
+# ⚠ 이 URL은 사용자 브라우저에서만 열린다(로그인 없이 열람 확인됨).
+#    서버는 절대 fetch/접속하지 않는다 — 나라장터가 자동 접근을 SSO·봇으로 차단.
+DETAIL_LINK_BASE = "https://shop.g2b.go.kr/link/GMSF001_01/?ctrtItemMngNo="
+
+
+def build_detail_url(cntrct_no: str) -> Optional[str]:
+    """하이픈 3분절 계약번호 → 종합쇼핑몰 상세 딥링크 (지시서 공식, 표본 2건 검증).
+    예: 'R25TA00248570-01-3' → ...?ctrtItemMngNo=R25TA00248570010000003"""
+    parts = str(cntrct_no).strip().split("-")
+    if len(parts) != 3:
+        return None
+    p1, p2, p3 = parts
+    return DETAIL_LINK_BASE + p1 + p2.zfill(2) + p3.zfill(7)
+
 
 def build_verify_url(item: dict[str, Any], raw: dict[str, Any]) -> str:
-    """1) 응답 URL 필드 → 2) 물품식별번호 상세검색 → 3) 품목명+규격 검색 폴백.
+    """검증 링크 생성. 서버는 생성만 하고 접속하지 않는다.
 
-    나라장터 물품목록정보시스템(goods.g2b.go.kr)의 공개 품목검색으로 연결한다.
-    로그인 없이 열리며, 물품식별번호로 실물이 나라장터에 등록돼 있음을 확인('인증샷')할 수 있다.
-    (종합쇼핑몰 shop.g2b.go.kr 상세는 SSO 로그인 필수라 공개 딥링크 불가.)
+    1) 계약 상세 딥링크 (브라우저에서 로그인 없이 종합쇼핑몰 상세가 열림) ⭐
+       - 우리 API: shopngCntrctNo(계약번호+차수) + shopngCntrctSno(품목순번 7자리 패딩)
+       - 또는 하이픈 3분절 계약번호 필드가 있으면 build_detail_url 공식
+    2) 폴백: 물품목록정보시스템 공개 검색 (물품식별번호) — 로그인 없이 실물 확인
     """
-    # 1) 물품식별번호로 정확히 그 물건 조회 (총 1건)
+    cno = _first_by_keys(raw, ("shopngcntrctno", "cntrctno", "ctrtno"))
+    if cno:
+        cno = str(cno).strip()
+        if "-" in cno:
+            u = build_detail_url(cno)
+            if u:
+                return u
+        else:
+            sno = _first_by_keys(raw, ("shopngcntrctsno", "cntrctsno", "ctrtsno"))
+            if sno not in (None, "", 0):
+                return DETAIL_LINK_BASE + cno + str(sno).strip().zfill(7)
+
+    # 폴백: 물품목록정보시스템 공개 품목검색 (식별번호)
     ident = _first_by_keys(raw, ("prdctidntno", "goodsidntfcno", "idntfcno"))
     if ident and str(ident).strip():
         return f"{G2B_GOODS_SEARCH}?searchGoodsIdntfcNo={urllib.parse.quote(str(ident).strip())}"
-
-    # 2) 물품분류번호로 조회 (해당 품목군)
-    clsfc = _first_by_keys(raw, ("prdctclsfcno", "goodsclsfcno", "clsfcno"))
-    if clsfc and str(clsfc).strip():
-        return f"{G2B_GOODS_SEARCH}?searchGoodsClsfcNo={urllib.parse.quote(str(clsfc).strip())}"
-
-    # 3) 품명으로 조회 (폴백)
-    nm = (item.get("name") or "").strip()
-    if nm:
-        return f"{G2B_GOODS_SEARCH}?searchGoodsNm={urllib.parse.quote(nm)}"
     return ""
 
 

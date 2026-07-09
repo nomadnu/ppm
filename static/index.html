@@ -66,6 +66,9 @@
                border-bottom:1px solid #eef0f3; font-size:.92em; }
   .hist-item .grow { flex:1; }
   .link { color:var(--accent); text-decoration:none; }
+  .verify-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .copybtn { padding:2px 7px; font-size:.78em; border:1px solid var(--bd); border-radius:6px;
+             background:#f7f8fa; color:var(--muted); cursor:pointer; }
   .muted { color:var(--muted); }
   .disclaimer { color:var(--muted); font-size:.85em; margin-top:18px; text-align:center; }
   .hint { color:var(--muted); font-size:.85em; }
@@ -280,7 +283,10 @@ function render(){
         <div class="company">${esc(c.company||'-')}</div>
         <div class="price num">${fmt(c.price)}원</div>
         <div class="meta">${esc(c.spec||'')} · ${esc(c.region||'')}<br>${esc(c.contractDate||'')} · ${esc(c.source||'')}</div>
-        ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank">나라장터 확인 ↗</a>`:''}
+        <div class="verify-row">
+          ${c.verifyUrl?`<a class="link" href="${esc(c.verifyUrl)}" target="_blank" rel="noopener">나라장터 확인 ↗</a>`:''}
+          ${c.identNo?`<button class="copybtn" onclick="copyIdent('${esc(c.identNo)}')">📋 번호복사</button>`:''}
+        </div>
         <button class="primary" onclick='selectItem(${JSON.stringify(c).replace(/'/g,"&#39;")}, ${c.rank})'>이 업체로 선정</button>
       </div>`;
     });
@@ -296,7 +302,7 @@ function render(){
     html += `<tr><td>${badge(it)}</td><td>${esc(it.name)}</td><td>${esc(it.spec)}</td>
       <td class="r num">${fmt(it.price)}</td><td>${esc(it.unit)}</td><td>${esc(it.company)}</td>
       <td>${esc(it.region)}</td><td>${esc(it.contractDate||'')}</td><td>${esc(it.source)}</td>
-      <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank">확인↗</a>`:''}</td>
+      <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank" rel="noopener">확인↗</a>`:''}${it.identNo?` <button class="copybtn" onclick="copyIdent('${esc(it.identNo)}')" title="물품식별번호 복사">📋</button>`:''}</td>
       <td class="row-actions"><button onclick='selectItem(${JSON.stringify({...it,itemRef:i}).replace(/'/g,"&#39;")}, null)'>선정</button></td></tr>`;
   });
   html += `</table></div></div>`;
@@ -411,6 +417,13 @@ async function saveNote(){
 async function delNote(id){ if(!confirm('삭제할까요?'))return;
   await fetch(`/api/notes/${id}`,{method:'DELETE'}); loadNotes(); }
 function val(id){ return document.getElementById(id).value.trim()||null; }
+
+function copyIdent(no){
+  const txt=String(no);
+  (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject())
+    .then(()=>toast('물품식별번호 '+txt+' 복사됨 — 나라장터에서 붙여넣어 검색하세요'))
+    .catch(()=>{ prompt('물품식별번호 (복사하세요)', txt); });
+}
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 

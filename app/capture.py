@@ -130,7 +130,9 @@ async def build_png(selection: dict) -> tuple[bytes, str]:
     demo = runtime.is_demo()
     if not demo:
         url = selection.get("verifyUrl")
-        if url:
+        # ⚠ shop.g2b.go.kr(종합쇼핑몰)는 서버 자동 접근을 SSO·봇으로 차단 → 절대 접속 안 함(지시서 §3-2).
+        #    캡처는 차단되지 않는 URL만 시도하고, 그 외엔 자체 렌더링 카드로 폴백.
+        if url and "g2b.go.kr" not in url:
             body = await _playwright_capture(url)
             if body is None:
                 note = "원본 캡처에 실패해 대체 형식으로 저장했어요"
