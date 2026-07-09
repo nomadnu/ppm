@@ -69,6 +69,10 @@
   .verify-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .copybtn { padding:2px 7px; font-size:.78em; border:1px solid var(--bd); border-radius:6px;
              background:#f7f8fa; color:var(--muted); cursor:pointer; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 4px; }
+  .chip { padding:6px 13px; border:1px solid var(--accent); border-radius:20px; background:#fff;
+          color:var(--accent); cursor:pointer; font-size:.92em; }
+  .chip:hover { background:var(--accent); color:#fff; }
   .muted { color:var(--muted); }
   .disclaimer { color:var(--muted); font-size:.85em; margin-top:18px; text-align:center; }
   .hint { color:var(--muted); font-size:.85em; }
@@ -248,6 +252,17 @@ async function doSearch(reQ){
   finally{ btn.disabled=false; btn.textContent='조회'; }
 }
 
+async function pickName(name){
+  const q = STATE.data ? STATE.data.query : document.getElementById('q').value.trim();
+  const btn=document.getElementById('btnSearch'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>조회 중';
+  try{
+    const r=await fetch(`/api/search?q=${encodeURIComponent(q)}&months=${months()}&pick=${encodeURIComponent(name)}`);
+    if(!r.ok) throw new Error('조회 실패');
+    STATE.data=await r.json(); STATE.selection=null; render(); loadHistory();
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; btn.textContent='조회'; }
+}
+
 function badge(it){
   let h='';
   if(it.isDesignated) h+='<span class="b-des">🏢지정공급처</span>';
@@ -268,12 +283,23 @@ function render(){
 
   // 검색어 정규화 고지 (F1 동의어)
   if(d.normalizedQuery){
+    const verb = d.learned ? '(으)로 사전에 <b>등록하고</b> 검색했어요' : '(으)로 검색했어요';
     html += `<div class="panel" style="background:#eef6ff;border-color:#bcd8ff">
-      🔎 <b>『${esc(d.query)}』</b>을(를) 조달청 세부품명 <b>『${esc((d.canonicals||[]).join(' + '))}』</b>(으)로 검색했어요.</div>`;
+      🔎 <b>『${esc(d.query)}』</b>을(를) 조달청 세부품명 <b>『${esc((d.canonicals||[]).join(' + '))}』</b>${verb}.</div>`;
   }
 
   // 경고
   (d.diagnostics.warnings||[]).forEach(w=>{ html += `<div class="panel hint">⚠ ${esc(w)}</div>`; });
+
+  // 품명 탐색 후보 (F1-2) — 0건일 때 세부품명 선택 유도
+  if(d.nameSuggestions && d.nameSuggestions.length){
+    html += `<div class="panel" style="background:#fffaf0;border-color:#f2c94c">
+      <h2>혹시 이 세부품명인가요? — 선택하면 조회 + 사전에 자동 등록됩니다</h2><div class="chips">`;
+    d.nameSuggestions.forEach(s=>{
+      html += `<button class="chip" title="${esc(s.desc||'')}" onclick="pickName('${esc(s.name)}')">${esc(s.name)}</button>`;
+    });
+    html += `</div><div class="hint">『${esc(d.query)}』로는 결과가 없어, 조달청 물품목록에서 비슷한 세부품명을 찾았어요.</div></div>`;
+  }
 
   // 세부품명별 요약 (복수 매핑)
   if(d.byCanonical && d.byCanonical.length){

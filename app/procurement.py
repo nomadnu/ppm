@@ -395,6 +395,76 @@ async def fetch_supplier_items(canonicals: list[str], spec_tokens: list[str],
     return out
 
 
+# ── 품명 탐색 (F1-2) — ③ 물품목록으로 세부품명 후보 제시 ───────────
+_THNG_LIST_URL = (config.API_GATEWAY
+                  + "/1230000/ao/ThngListInfoService02/getPrdctClsfcNoUnit10Info02")
+_MODIFIERS = ("조립식", "PC", "무근", "이형", "원심력", "진동및전압", "일반", "고급")
+
+
+async def suggest_classifications(keyword: str, warnings: list[str],
+                                  limit: int = 10) -> list[dict[str, Any]]:
+    """③ 물품목록정보로 세부품명 후보 탐색. 사전 미등록·0건 품목의 검색을 돕는다.
+    (완전일치 → 접두 → 포함 순 랭킹, 수식어 제거 재시도.) 데모면 빈 리스트."""
+    kw = (keyword or "").strip()
+    if runtime.is_demo() or not kw:
+        return []
+
+    async def fetch(word: str) -> list[dict[str, Any]]:
+        params = {"serviceKey": runtime.get_service_key(), "type": "json",
+                  "numOfRows": "50", "pageNo": "1", "dtilPrdctClsfcNoNm": word}
+        try:
+            async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+                data = (await client.get(_THNG_LIST_URL, params=params)).json()
+        except Exception:
+            return []
+        items = _dig(data, ("response", "body", "items"))
+        if isinstance(items, dict):
+            items = items.get("item")
+        if isinstance(items, dict):
+            items = [items]
+        out = []
+        for it in (items or []):
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("useYn", "Y")).upper() != "Y":
+                continue
+            name = it.get("dtilPrdctClsfcNoNm")
+            if name:
+                out.append({"name": name, "no": it.get("dtilPrdctClsfcNo"),
+                            "desc": (it.get("dtilPrdctClsfcNoNmDscrpt") or "")[:70]})
+        return out
+
+    cands = await fetch(kw)
+    if not cands:                       # 수식어 제거 후 재시도
+        stripped = kw
+        for m in _MODIFIERS:
+            stripped = stripped.replace(m, "")
+        stripped = stripped.strip()
+        if stripped and stripped != kw:
+            cands = await fetch(stripped)
+
+    # 의미 있는 겹침(2글자 n-gram)만 유지 — '관' 한 글자 매칭 같은 잡음 제거
+    grams = {kw[i:i + 2] for i in range(len(kw) - 1)}
+
+    def relevant(name: str) -> bool:
+        if not grams:
+            return kw in name
+        return any(g in name for g in grams) or name in kw
+
+    def rank(c: dict[str, Any]):
+        n = c["name"]
+        r = 0 if n == kw else (1 if n.startswith(kw) else (2 if kw in n else 3))
+        return (r, len(n), n)
+
+    seen, uniq = set(), []
+    for c in sorted((c for c in cands if relevant(c["name"])), key=rank):
+        if c["name"] in seen:
+            continue
+        seen.add(c["name"])
+        uniq.append(c)
+    return uniq[:limit]
+
+
 def _demo_designated(canonicals: list[str], spec_tokens: list[str],
                      suppliers: list[str]) -> list[dict[str, Any]]:
     """데모 모드용 — 각 지정 공급처를 합성 단가로 생성해 후보 포함을 시연."""

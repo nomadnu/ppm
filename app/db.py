@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .config import ADMIN_PASSWORD_DEFAULT
 
@@ -99,7 +100,8 @@ def get_history(hid: str) -> Optional[dict[str, Any]]:
 def _history_by_query(query: str) -> list[dict[str, Any]]:
     """같은 검색어의 이력 전건(파이썬 정렬 — 복합 색인 불필요)."""
     rows = [{**d.to_dict(), "id": d.id}
-            for d in _col("search_history").where("query", "==", query).stream()]
+            for d in _col("search_history")
+            .where(filter=FieldFilter("query", "==", query)).stream()]
     rows.sort(key=lambda r: r.get("searched_at") or "", reverse=True)
     return rows
 

@@ -61,6 +61,7 @@ def _now_date() -> str:
 async def api_search(
     q: str = Query(..., min_length=1),
     months: int = Query(6),
+    pick: Optional[str] = Query(None),   # 품명 탐색 후보 선택 → 사전 자동 학습
     debug: int = Query(0),
 ) -> JSONResponse:
     if months not in (1, 3, 6, 12):
@@ -69,8 +70,17 @@ async def api_search(
 
     # 검색어 정규화: 통칭 → 세부품명(복수 가능) + 규격 토큰 (F1 동의어 사전)
     resolved = search.resolve_query(q, db.synonym_cache())
-    canonicals = resolved["canonicals"]
-    spec_tokens = resolved["specTokens"]
+    learned = False
+    if pick:
+        # 품명 탐색에서 세부품명을 고름 → alias(원 품명부) → pick 으로 사전 자동 등록 (F1-2)
+        name_part = q.split()[0] if q.split() else q
+        db.upsert_synonym(name_part, [pick], [], False, _now_iso())
+        canonicals = [pick]
+        spec_tokens = resolved["specTokens"]
+        learned = True
+    else:
+        canonicals = resolved["canonicals"]
+        spec_tokens = resolved["specTokens"]
     normalized_query = " ".join(canonicals + spec_tokens)
 
     # 일반 검색과 지정 공급처(협동조합) 조회를 동시에 실행
@@ -108,9 +118,15 @@ async def api_search(
     warn = search.sample_warning(summary.get("count", 0))
     if warn:
         warnings.insert(0, warn)
-    if not resolved["matched"] and summary.get("count", 0) == 0:
-        warnings.append("조달청 세부품명이 달라 결과가 없을 수 있어요 — 관리자 메뉴의 "
-                        "'품명 사전'에 이 통칭의 세부품명을 등록하면 다음부터 검색됩니다")
+
+    # 품명 탐색 (F1-2): 결과 0건이고 사전 매칭도 실패면 세부품명 후보 제시
+    name_suggestions: list[dict[str, Any]] = []
+    if summary.get("count", 0) == 0 and not resolved["matched"] and not pick:
+        name_suggestions = await procurement.suggest_classifications(
+            canonicals[0] if canonicals else q, warnings)
+        if not name_suggestions:
+            warnings.append("조달청 세부품명이 달라 결과가 없을 수 있어요 — 관리자 메뉴의 "
+                            "'품명 사전'에 이 통칭의 세부품명을 등록하면 다음부터 검색됩니다")
 
     # 세부품명별 요약 (복수 매핑 시 분리 표시 — 자연석 vs 콘크리트처럼 사실상 다른 자재)
     by_canonical = []
@@ -125,8 +141,10 @@ async def api_search(
 
     payload: dict[str, Any] = {
         "query": q,
-        "normalizedQuery": normalized_query if resolved["matched"] else None,
+        "normalizedQuery": normalized_query if (resolved["matched"] or learned) else None,
         "matchedAlias": resolved["alias"],
+        "learned": learned,
+        "nameSuggestions": name_suggestions,
         "canonicals": canonicals,
         "byCanonical": by_canonical,
         "months": months,
