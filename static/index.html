@@ -328,7 +328,7 @@ function render(){
   // 후보 3선 (F8)
   if(d.candidates && d.candidates.length){
     html += `<div class="panel"><h2>중간가 후보 3선 — 1개를 선정하세요
-      <button id="btnImg" onclick="saveImage()" disabled>🖼 이미지 저장</button></h2><div class="cards">`;
+      <button id="btnImg" onclick="saveImage()" title="후보를 선정하면 조서용 이미지를 저장할 수 있어요" disabled>🖼 이미지 저장</button></h2><div class="cards">`;
     d.candidates.forEach(c=>{
       const prev = (s.prevSelected && c.company===s.prevSelected) ? '<span class="b-prev">지난 회차 선정</span>' : '';
       html += `<div class="card${c.isDesignated?' designated':''}" id="card-${c.rank}">
@@ -388,7 +388,8 @@ async function saveImage(){
     const it = STATE.selection;
     const body = { name:it.name||STATE.data.query.split(' ')[0], company:it.company, spec:it.spec,
       price:it.price, region:it.region, source:it.source, contractDate:it.contractDate,
-      isJeonbuk:!!it.isJeonbuk, isCertified:!!it.isCertified, verifyUrl:it.verifyUrl };
+      isJeonbuk:!!it.isJeonbuk, isCertified:!!it.isCertified, verifyUrl:it.verifyUrl,
+      imageUrl:it.imageUrl };
     const r = await fetch('/api/image', { method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     if(!r.ok) throw new Error('이미지 생성 실패');

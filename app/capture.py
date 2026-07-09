@@ -1,27 +1,26 @@
-"""선정 결과 이미지 저장 (F9) — 실무 조서 붙임 형식.
+"""선정 결과 이미지 저장 (F9) — 실무 단가 조서 붙임 형식.
 
-기본: 나라장터 상세 페이지를 Playwright(헤드리스 Chromium)로 캡처 → Pillow로
-"■ 물품명(규격)" 제목 밴드 합성 → PNG.
-
-폴백(캡처 실패·Playwright 미설치·데모 모드): 자체 렌더링 요약 카드(Pillow)로 대체.
+종합쇼핑몰 상세페이지 전체 캡처는 서버 접근이 SSO·봇으로 차단되어 불가(설계 v0.5 접근정책).
+대신 조달청 서버의 '실제 상품 이미지'(로그인 없이 열리는 공개 정적 자산)를 가져와,
+"■ 물품명(규격)" 제목 + 상품사진 + 단가·업체·규격·인증 정보를 합쳐 조서 붙임용 PNG를 만든다.
+상품 이미지를 못 가져오면 정보 카드만으로 폴백한다.
 """
 from __future__ import annotations
 
 import io
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageFont
+import httpx
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from . import runtime
-
-CAPTURE_WIDTH = 1280
-CAPTURE_MAX_HEIGHT = 1400   # 상단(상품정보 영역) 위주로 자름
-TITLE_BAND_H = 64
+OUT_W = 760
+IMG_BOX = 280
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
     """한글 폰트 로드 — Windows 맑은고딕 우선, 실패 시 기본 폰트."""
-    for path in (r"C:\Windows\Fonts\malgunbd.ttf", r"C:\Windows\Fonts\malgun.ttf"):
+    for path in (r"C:\Windows\Fonts\malgunbd.ttf", r"C:\Windows\Fonts\malgun.ttf",
+                 "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"):
         try:
             return ImageFont.truetype(path, size)
         except OSError:
@@ -29,79 +28,72 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _title_band(width: int, title: str) -> Image.Image:
-    band = Image.new("RGB", (width, TITLE_BAND_H), "white")
-    draw = ImageDraw.Draw(band)
-    font = _load_font(28)
-    draw.text((16, 16), title, fill="black", font=font)
-    draw.line([(0, TITLE_BAND_H - 1), (width, TITLE_BAND_H - 1)], fill="#cccccc", width=1)
-    return band
-
-
-def _compose(title: str, body: Image.Image) -> bytes:
-    """제목 밴드 + 본문 이미지 세로 결합."""
-    w = body.width
-    band = _title_band(w, title)
-    out = Image.new("RGB", (w, band.height + body.height), "white")
-    out.paste(band, (0, 0))
-    out.paste(body, (0, band.height))
-    buf = io.BytesIO()
-    out.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-async def _playwright_capture(url: str) -> Optional[Image.Image]:
-    """나라장터 페이지 접속 → 상단 영역 캡처. 실패 시 None."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
+async def _fetch_image(url: Optional[str]) -> Optional[Image.Image]:
+    """조달청 공개 상품 이미지(shop.g2b.go.kr/static/...)를 가져온다. 실패 시 None.
+    ※ 이는 SSO로 막힌 상세 페이지가 아니라 공개 정적 이미지 자산이다."""
+    if not url or not str(url).startswith("http"):
         return None
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": CAPTURE_WIDTH, "height": 900})
-            await page.goto(url, wait_until="networkidle", timeout=15000)
-            png = await page.screenshot(clip={"x": 0, "y": 0,
-                                              "width": CAPTURE_WIDTH,
-                                              "height": min(CAPTURE_MAX_HEIGHT, 900)})
-            await browser.close()
-        return Image.open(io.BytesIO(png)).convert("RGB")
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
+            return Image.open(io.BytesIO(r.content)).convert("RGB")
     except Exception:
         return None
+    return None
 
 
-def _fallback_card(selection: dict) -> Image.Image:
-    """2차 폴백: 자체 렌더링 선정 요약 카드."""
-    def g(key: str) -> str:
-        v = selection.get(key)
-        return str(v) if v not in (None, "") else "-"
+def _g(selection: dict, key: str) -> str:
+    v = selection.get(key)
+    return str(v) if v not in (None, "") else "-"
 
-    w, h = CAPTURE_WIDTH, 420
-    img = Image.new("RGB", (w, h), "white")
-    draw = ImageDraw.Draw(img)
-    f_big = _load_font(30)
-    f_mid = _load_font(24)
-    f_small = _load_font(18)
 
-    y = 24
-    card_top, card_bottom = y, y + 360
-    draw.rectangle([(24, card_top), (w - 24, card_bottom)], outline="#333333", width=2)
-    pad = 48
-    draw.text((pad, y + 24), g("company"), fill="black", font=f_big)
+async def build_png(selection: dict) -> tuple[bytes, str]:
+    """선정 항목 → (PNG bytes, 안내문구). 제목은 '■ 물품명(규격)'."""
+    name = selection.get("name") or selection.get("company") or "품목"
+    spec = selection.get("spec") or ""
+    title = f"■ {name}({spec})" if spec else f"■ {name}"
+
+    product = await _fetch_image(selection.get("imageUrl"))
+    note = "" if product else "상품 이미지를 불러오지 못해 정보만 저장했어요"
+
+    H = 430
+    canvas = Image.new("RGB", (OUT_W, H), "white")
+    draw = ImageDraw.Draw(canvas)
+    f_title = _load_font(26)
+    f_company = _load_font(23)
+    f_price = _load_font(32)
+    f_line = _load_font(18)
+    f_badge = _load_font(20)
+
+    # 제목 밴드
+    draw.text((20, 18), title, fill="black", font=f_title)
+    draw.line([(0, 60), (OUT_W, 60)], fill="#cccccc", width=1)
+
+    content_y = 82
+    info_x = 24
+    # 상품 이미지 (있으면 좌측)
+    if product:
+        thumb = ImageOps.contain(product, (IMG_BOX, IMG_BOX))
+        canvas.paste(thumb, (24, content_y))
+        draw.rectangle([23, content_y - 1, 24 + thumb.width, content_y + thumb.height],
+                       outline="#dddddd", width=1)
+        info_x = 24 + IMG_BOX + 28
+
+    # 정보 블록
+    y = content_y
+    draw.text((info_x, y), _g(selection, "company"), fill="black", font=f_company)
     price = selection.get("price")
     price_s = f"{price:,}원" if isinstance(price, (int, float)) else "-"
-    draw.text((pad, y + 78), price_s, fill="#0a7d33", font=f_big)
+    draw.text((info_x, y + 40), price_s, fill="#0a7d33", font=f_price)
 
-    lines = [
-        f"규격: {g('spec')}",
-        f"소재지: {g('region')}",
-        f"출처: {g('source')}",
-        f"계약일: {g('contractDate')}",
-    ]
-    yy = y + 130
-    for ln in lines:
-        draw.text((pad, yy), ln, fill="#333", font=f_small)
-        yy += 30
+    y += 92
+    for ln in (f"규격: {_g(selection, 'spec')}",
+               f"소재지: {_g(selection, 'region')}",
+               f"출처: {_g(selection, 'source')}",
+               f"계약일: {_g(selection, 'contractDate')}"):
+        draw.text((info_x, y), ln, fill="#333333", font=f_line)
+        y += 30
 
     badges = []
     if selection.get("isJeonbuk"):
@@ -109,37 +101,13 @@ def _fallback_card(selection: dict) -> Image.Image:
     if selection.get("isCertified"):
         badges.append("인증")
     if badges:
-        draw.text((pad, yy + 8), " · ".join(f"[{b}]" for b in badges),
-                  fill="#c2410c", font=f_mid)
+        draw.text((info_x, y + 6), " · ".join(f"[{b}]" for b in badges),
+                  fill="#c2410c", font=f_badge)
 
-    draw.text((pad, card_bottom - 30),
-              "※ 원본 캡처 대체 형식 — 조달청 계약단가 기준 참고자료",
-              fill="#999", font=_load_font(14))
-    return img
+    draw.text((24, H - 30),
+              "※ 조달청 종합쇼핑몰 계약단가 기준 참고자료 (원본: 나라장터 종합쇼핑몰)",
+              fill="#999999", font=_load_font(13))
 
-
-async def build_png(selection: dict) -> tuple[bytes, str]:
-    """선정 항목 → (PNG bytes, 폴백여부 문구). 제목은 '■ 물품명(규격)'."""
-    name = selection.get("name") or selection.get("company") or "품목"
-    spec = selection.get("spec") or ""
-    title = f"■ {name}({spec})" if spec else f"■ {name}"
-
-    note = ""
-    body: Optional[Image.Image] = None
-
-    demo = runtime.is_demo()
-    if not demo:
-        url = selection.get("verifyUrl")
-        # ⚠ shop.g2b.go.kr(종합쇼핑몰)는 서버 자동 접근을 SSO·봇으로 차단 → 절대 접속 안 함(지시서 §3-2).
-        #    캡처는 차단되지 않는 URL만 시도하고, 그 외엔 자체 렌더링 카드로 폴백.
-        if url and "g2b.go.kr" not in url:
-            body = await _playwright_capture(url)
-            if body is None:
-                note = "원본 캡처에 실패해 대체 형식으로 저장했어요"
-
-    if body is None:
-        body = _fallback_card(selection)
-        if not note:
-            note = "데모/폴백 형식(자체 렌더링)으로 저장했어요" if demo else note
-
-    return _compose(title, body), note
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue(), note

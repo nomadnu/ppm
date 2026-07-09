@@ -358,6 +358,7 @@ class ImageBody(BaseModel):
     isJeonbuk: bool = False
     isCertified: bool = False
     verifyUrl: Optional[str] = None
+    imageUrl: Optional[str] = None
 
 
 @app.post("/api/image")

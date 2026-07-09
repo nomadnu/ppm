@@ -186,6 +186,7 @@ def _cand_card(it: dict[str, Any], idx: int, rank: int) -> dict[str, Any]:
         "verifyUrl": it.get("verifyUrl"),
         "goodsUrl": it.get("goodsUrl"),
         "identNo": it.get("identNo"),
+        "imageUrl": it.get("imageUrl"),
     }
 
 
