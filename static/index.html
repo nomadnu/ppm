@@ -187,6 +187,18 @@
       </div>
 
       <div class="panel">
+        <h2>품명 사전 (통칭 → 조달청 세부품명)</h2>
+        <div class="note-form">
+          <input id="sy_alias" placeholder="통칭 (예: 철근, PC암거)">
+          <input id="sy_canon" placeholder="세부품명 (여러 개는 콤마로: 자연석경계석,콘크리트경계블록)">
+          <input id="sy_extra" placeholder="규격 추가필터 (선택, 콤마)">
+          <label><input type="checkbox" id="sy_verified"> 검증됨</label>
+          <div class="full"><button class="primary" onclick="addSynonym()">추가/수정</button></div>
+        </div>
+        <div id="synList" class="hint">불러오는 중…</div>
+      </div>
+
+      <div class="panel">
         <h2>비밀번호 변경</h2>
         <div class="note-form">
           <input type="password" id="ad_cur" placeholder="현재 비밀번호">
@@ -254,8 +266,23 @@ function render(){
 
   // (지정 공급처 안내 배너는 표시하지 않음 — 지정공급처는 후보 카드의 🏢 배지로 표기)
 
+  // 검색어 정규화 고지 (F1 동의어)
+  if(d.normalizedQuery){
+    html += `<div class="panel" style="background:#eef6ff;border-color:#bcd8ff">
+      🔎 <b>『${esc(d.query)}』</b>을(를) 조달청 세부품명 <b>『${esc((d.canonicals||[]).join(' + '))}』</b>(으)로 검색했어요.</div>`;
+  }
+
   // 경고
   (d.diagnostics.warnings||[]).forEach(w=>{ html += `<div class="panel hint">⚠ ${esc(w)}</div>`; });
+
+  // 세부품명별 요약 (복수 매핑)
+  if(d.byCanonical && d.byCanonical.length){
+    html += `<div class="panel"><h2>세부품명별 요약</h2>`;
+    d.byCanonical.forEach(b=>{
+      html += `<div class="num">· <b>${esc(b.canonical)}</b> — ${b.count}건 · 중간가 ${b.median?fmt(b.median)+'원':'—'}</div>`;
+    });
+    html += `<div class="hint">복수 세부품명은 사실상 다른 자재(예: 자연석 vs 콘크리트)일 수 있어 분리 표기합니다.</div></div>`;
+  }
 
   // 요약 (F2)
   html += `<div class="panel"><h2>요약</h2><div class="summary-grid">
@@ -453,7 +480,33 @@ async function adminFetch(url, opts={}){
 function showAdminLogin(){ document.getElementById('adminLogin').style.display='block';
   document.getElementById('adminPanel').style.display='none'; }
 function showAdminPanel(){ document.getElementById('adminLogin').style.display='none';
-  document.getElementById('adminPanel').style.display='block'; loadAdminStatus(); }
+  document.getElementById('adminPanel').style.display='block'; loadAdminStatus(); loadSynonyms(); }
+
+// ── 품명 사전 관리 ──
+async function loadSynonyms(){
+  try{
+    const rows = await (await fetch('/api/synonyms')).json();
+    document.getElementById('synList').innerHTML = rows.map(s=>`
+      <div class="hist-item"><span class="grow"><b>${esc(s.alias)}</b> → ${esc((s.canonicals||[]).join(' + '))}
+        ${(s.extra_filters&&s.extra_filters.length)?' <span class="hint">[필터:'+esc(s.extra_filters.join(','))+']</span>':''}
+        ${s.verified?' ✅':' <span class="hint">미검증</span>'}</span>
+        <button onclick="delSynonym(${s.id})">🗑</button></div>`).join('') || '<span class="muted">사전이 비어 있음</span>';
+  }catch(e){ document.getElementById('synList').textContent='불러오기 실패'; }
+}
+async function addSynonym(){
+  const alias=document.getElementById('sy_alias').value.trim();
+  const canon=document.getElementById('sy_canon').value.split(',').map(x=>x.trim()).filter(Boolean);
+  const extra=document.getElementById('sy_extra').value.split(',').map(x=>x.trim()).filter(Boolean);
+  const verified=document.getElementById('sy_verified').checked;
+  if(!alias||!canon.length){ toast('통칭과 세부품명은 필수'); return; }
+  const r=await fetch('/api/synonyms',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({alias,canonicals:canon,extra_filters:extra,verified})});
+  if(r.ok){ ['sy_alias','sy_canon','sy_extra'].forEach(i=>document.getElementById(i).value='');
+    document.getElementById('sy_verified').checked=false; toast('사전에 반영됨'); loadSynonyms(); }
+  else toast('저장 실패');
+}
+async function delSynonym(id){ if(!confirm('삭제할까요?'))return;
+  await fetch('/api/synonyms/'+id,{method:'DELETE'}); loadSynonyms(); }
 
 function openAdmin(){
   document.getElementById('ad_login_err').textContent='';

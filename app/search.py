@@ -5,11 +5,65 @@
 """
 from __future__ import annotations
 
+import re
 import statistics
 import urllib.parse
 from typing import Any, Optional
 
 from .config import G2B_GOODS_SEARCH
+
+# ── 검색어 정규화·동의어 해석 (F1) ────────────────────────────────
+_HD_RE = re.compile(r"\bH?D(\d{2})\b", re.IGNORECASE)   # HD13/H13 → D13
+_FULLWIDTH = {0xFF01 + i: 0x21 + i for i in range(94)}   # 전각 → 반각
+
+
+def norm_alias(text: str) -> str:
+    """alias 정규형: 공백 제거 + 소문자."""
+    return re.sub(r"\s+", "", str(text or "")).lower()
+
+
+def normalize_spec_token(tok: str) -> str:
+    """규격 표기 정규화: 전각→반각, HD13/H13→D13."""
+    t = str(tok or "").translate(_FULLWIDTH)
+    return _HD_RE.sub(r"D\1", t).strip()
+
+
+def resolve_query(query: str, syn_cache: dict[str, dict]) -> dict[str, Any]:
+    """검색어 → {alias, canonicals[], specTokens[], entry}.
+    앞 토큰 연접이 사전 alias와 일치하면 세부품명으로 변환하고 나머지를 규격부로.
+    실패 시 첫 토큰을 품명으로(변환 없음)."""
+    tokens = query.split()
+    best_alias, consumed = None, 0
+    joined = ""
+    for i, t in enumerate(tokens):
+        joined += norm_alias(t)
+        if joined in syn_cache:
+            best_alias, consumed = joined, i + 1
+    spec: list[str] = []
+    if best_alias:
+        spec = [normalize_spec_token(t) for t in tokens[consumed:]]
+    else:
+        # 공백 없이 붙여 쓴 입력 대비: 전체 정규형의 최장 alias 접두 매칭
+        full = norm_alias(query)
+        for alias in sorted(syn_cache, key=len, reverse=True):
+            if full.startswith(alias):
+                best_alias = alias
+                rest = full[len(alias):]
+                spec = [normalize_spec_token(rest)] if rest else []
+                break
+
+    if best_alias:
+        entry = syn_cache[best_alias]
+        spec = [s for s in spec if s] + [normalize_spec_token(f)
+                                         for f in entry.get("extra_filters", [])]
+        return {"alias": best_alias, "canonicals": list(entry.get("canonicals") or []),
+                "specTokens": spec, "entry": entry, "matched": True}
+
+    name = tokens[0] if tokens else query
+    spec = [normalize_spec_token(t) for t in tokens[1:]]
+    return {"alias": None, "canonicals": [name], "specTokens": spec,
+            "entry": None, "matched": False}
+
 
 OUTLIER_RATIO = 0.70   # 중앙값 ±70% 벗어나면 이상치 가능
 NEAR_MEDIAN_RATIO = 0.05  # 후보군: 중간가 ±5%

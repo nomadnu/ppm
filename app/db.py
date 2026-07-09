@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS settings (
     key    TEXT PRIMARY KEY,
     value  TEXT
 );
+
+-- 품명 동의어 사전 (통칭 → 조달청 세부품명 변환, 복수 매핑 지원)
+CREATE TABLE IF NOT EXISTS synonyms (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    alias         TEXT UNIQUE NOT NULL,   -- 정규형(소문자·공백제거)
+    canonicals    TEXT NOT NULL,          -- JSON 배열: 세부품명들
+    extra_filters TEXT,                   -- JSON 배열: 규격 필터에 자동 추가할 키워드
+    verified      INTEGER DEFAULT 0,
+    updated_at    TEXT NOT NULL
+);
 """
 
 
@@ -266,6 +276,115 @@ def seed_admin_if_empty() -> None:
     if get_setting("admin_pw_hash") is None:
         h = hashlib.sha256(ADMIN_PASSWORD_DEFAULT.encode("utf-8")).hexdigest()
         set_setting("admin_pw_hash", h)
+
+
+# ── 품명 동의어 사전 (synonyms) ───────────────────────────────────
+
+def _norm_alias(text: str) -> str:
+    """alias 정규형: 공백 제거 + 소문자."""
+    import re
+    return re.sub(r"\s+", "", str(text or "")).lower()
+
+
+# 검색 요청마다 Firestore/DB 전건 읽기 방지 — 메모리 캐시
+_SYN_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def load_synonym_cache() -> None:
+    """synonyms 전건을 메모리 캐시에 적재 (기동 시·변경 시 호출)."""
+    _SYN_CACHE.clear()
+    for row in list_synonyms():
+        _SYN_CACHE[row["alias"]] = {
+            "canonicals": row["canonicals"],
+            "extra_filters": row["extra_filters"],
+            "verified": row["verified"],
+        }
+
+
+def synonym_cache() -> dict[str, dict[str, Any]]:
+    if not _SYN_CACHE:
+        load_synonym_cache()
+    return _SYN_CACHE
+
+
+def list_synonyms() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM synonyms ORDER BY alias").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("canonicals", "extra_filters"):
+            try:
+                d[k] = json.loads(d[k]) if d[k] else []
+            except (json.JSONDecodeError, TypeError):
+                d[k] = []
+        d["verified"] = bool(d["verified"])
+        out.append(d)
+    return out
+
+
+def upsert_synonym(alias: str, canonicals: list[str], extra_filters: list[str],
+                   verified: bool, updated_at: str) -> None:
+    a = _norm_alias(alias)
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO synonyms (alias, canonicals, extra_filters, verified, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(alias) DO UPDATE SET
+                 canonicals=excluded.canonicals, extra_filters=excluded.extra_filters,
+                 verified=excluded.verified, updated_at=excluded.updated_at""",
+            (a, json.dumps(canonicals, ensure_ascii=False),
+             json.dumps(extra_filters or [], ensure_ascii=False),
+             1 if verified else 0, updated_at),
+        )
+    load_synonym_cache()
+
+
+def delete_synonym(sid: int) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM synonyms WHERE id = ?", (sid,))
+    load_synonym_cache()
+    return cur.rowcount > 0
+
+
+def seed_synonyms_if_empty() -> None:
+    from datetime import datetime, timezone
+    if list_synonyms():
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for alias, canons, extra, verified in SEED_SYNONYMS:
+        upsert_synonym(alias, canons, extra, verified, now)
+
+
+# 현장 검증 완료분 (작업 지시서 #1 §2-3) — 통칭 → 세부품명
+SEED_SYNONYMS: list[tuple] = [
+    ("철근", ["철근콘크리트용봉강"], [], True),
+    ("이형철근", ["철근콘크리트용봉강"], [], True),
+    ("이형봉강", ["철근콘크리트용봉강"], [], True),
+    ("암거", ["조립식철근콘크리트암거블록"], [], True),
+    ("PC암거", ["조립식철근콘크리트암거블록"], [], True),
+    ("조립식PC암거", ["조립식철근콘크리트암거블록"], [], True),
+    ("맨홀", ["콘크리트맨홀블록"], [], True),
+    ("PC맨홀", ["콘크리트맨홀블록"], [], True),
+    ("맨홀고무링", ["콘크리트맨홀블록"], ["고무링"], True),
+    ("맨홀연결볼트", ["콘크리트맨홀블록"], ["연결볼트"], True),
+    ("맨홀사다리", ["콘크리트맨홀블록"], ["사다리"], True),
+    ("PE삼중벽관", ["일반용폴리에틸렌관"], ["벽관"], True),
+    ("삼중벽관", ["일반용폴리에틸렌관"], ["벽관"], True),
+    ("PE이중벽관", ["일반용폴리에틸렌관"], ["벽관"], True),
+    ("이중벽관", ["일반용폴리에틸렌관"], ["벽관"], True),
+    ("PE수도관", ["일반용폴리에틸렌관", "일반용폴리에틸렌이음관"], [], True),
+    ("PE이음관", ["일반용폴리에틸렌이음관"], [], True),
+    ("폴리에틸렌이음관", ["일반용폴리에틸렌이음관"], [], True),
+    ("도로경계석", ["자연석경계석", "콘크리트경계블록"], [], True),
+    ("경계석", ["자연석경계석", "콘크리트경계블록"], [], True),
+    ("측구수로관", ["철근콘크리트용배수로관", "철근콘크리트벤치플룸"], [], True),
+    ("수로관", ["철근콘크리트용배수로관", "철근콘크리트벤치플룸"], [], True),
+    ("아스콘", ["순환아스팔트콘크리트", "순환상온아스팔트콘크리트"], [], False),
+    ("순환아스콘", ["순환아스팔트콘크리트"], [], True),
+    ("레미콘", ["레미콘"], [], True),
+    ("파형강관", ["파형강관"], [], True),
+]
 
 
 def seed_notes_if_empty() -> None:

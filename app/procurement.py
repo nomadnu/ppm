@@ -307,14 +307,6 @@ async def probe() -> list[dict[str, Any]]:
     return report
 
 
-def _split_keyword(keyword: str) -> tuple[str, list[str]]:
-    """검색어 → (품명부, 규격부 토큰들). 설계 F1: 품명으로 API 검색, 규격으로 로컬 필터."""
-    toks = keyword.split()
-    if not toks:
-        return keyword, []
-    return toks[0], toks[1:]
-
-
 def _spec_match(item: dict[str, Any], spec_tokens: list[str]) -> bool:
     """규격 토큰이 모두 품목명/규격 문자열에 포함되면 통과(공백 무시)."""
     if not spec_tokens:
@@ -323,49 +315,52 @@ def _spec_match(item: dict[str, Any], spec_tokens: list[str]) -> bool:
     return all(tok.lower().replace(" ", "") in hay for tok in spec_tokens)
 
 
-async def fetch_items(keyword: str, months: int, warnings: list[str]) -> list[dict[str, Any]]:
-    """검색어로 서비스 호출 → 표준화 → 규격 로컬 2차 필터. 데모 모드면 합성 데이터."""
+async def fetch_items(canonicals: list[str], spec_tokens: list[str],
+                      months: int, warnings: list[str]) -> list[dict[str, Any]]:
+    """세부품명(복수 가능)으로 서비스 호출 → 표준화 → 규격 로컬 2차 필터.
+    각 아이템에 출처 세부품명(sourceCanonical) 표시. 데모 모드면 합성 데이터."""
     if runtime.is_demo():
-        return _demo_items(keyword)
+        return _demo_items(canonicals, spec_tokens)
 
     _ensure_search_adopted()
-
-    name_part, spec_tokens = _split_keyword(keyword)
     active = [c for c in OPERATION_CANDIDATES
               if c.get("use_in_search") and _ADOPTED.get(c["service"])]
+    jobs = [(cand, canon) for canon in canonicals for cand in active]
 
-    async def one(client: httpx.AsyncClient, cand: dict[str, Any]) -> list[dict]:
+    async def one(client: httpx.AsyncClient, cand: dict[str, Any], canon: str) -> list[dict]:
         adopted = _ADOPTED[cand["service"]]
         return await _call(client, cand, adopted["operation"],
-                           adopted["query_param"], name_part, months) or []
+                           adopted["query_param"], canon, months) or []
 
     raw_count = 0
     results: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
-        groups = await asyncio.gather(*(one(client, c) for c in active))
-    for cand, raw_items in zip(active, groups):
+        groups = await asyncio.gather(*(one(client, cand, canon) for cand, canon in jobs))
+    for (cand, canon), raw_items in zip(jobs, groups):
         for raw in raw_items:
             if not isinstance(raw, dict):
                 continue
             raw_count += 1
             item = normalize_item(raw, cand["service"], warnings)
+            item["sourceCanonical"] = canon
             if _spec_match(item, spec_tokens):
                 results.append(item)
 
     if spec_tokens and raw_count and not results:
-        warnings.append(f"'{name_part}' {raw_count}건 중 규격 '{' '.join(spec_tokens)}' "
-                        f"일치 0건 — 규격 뒷부분을 줄여보세요")
+        warnings.append(f"세부품명 {canonicals} {raw_count}건 중 규격 "
+                        f"'{' '.join(spec_tokens)}' 일치 0건 — 규격 뒷부분을 줄여보세요")
     return results
 
 
-async def fetch_supplier_items(keyword: str, months: int, suppliers: list[str],
+async def fetch_supplier_items(canonicals: list[str], spec_tokens: list[str],
+                               months: int, suppliers: list[str],
                                warnings: list[str]) -> list[dict[str, Any]]:
     """지정 공급처(협동조합)를 종합쇼핑몰에서 업체명으로 직접 조회 → isDesignated 아이템.
     후보 3선에 무조건 포함시키기 위한 재료(설계 F7↔F8). 규격은 로컬 필터 적용."""
     if not suppliers:
         return []
     if runtime.is_demo():
-        return _demo_designated(keyword, suppliers)
+        return _demo_designated(canonicals, spec_tokens, suppliers)
 
     _ensure_search_adopted()
     cand = OPERATION_CANDIDATES[0]           # ① 종합쇼핑몰
@@ -373,11 +368,9 @@ async def fetch_supplier_items(keyword: str, months: int, suppliers: list[str],
     if not adopted:
         return []
 
-    name_part, spec_tokens = _split_keyword(keyword)
-
-    async def one(client: httpx.AsyncClient, sup: str) -> list[dict[str, Any]]:
+    async def one(client: httpx.AsyncClient, sup: str, canon: str) -> list[dict[str, Any]]:
         raw_items = await _call(client, cand, adopted["operation"],
-                                adopted["query_param"], name_part, months,
+                                adopted["query_param"], canon, months,
                                 extra={"cntrctCorpNm": sup, "numOfRows": "100"})
         found = []
         for raw in (raw_items or []):
@@ -387,21 +380,26 @@ async def fetch_supplier_items(keyword: str, months: int, suppliers: list[str],
             if _spec_match(item, spec_tokens):
                 item["isDesignated"] = True
                 item["designatedFor"] = sup
+                item["sourceCanonical"] = canon
                 found.append(item)
-        if not found:
-            warnings.append(f"지정 공급처 '{sup}' — 종합쇼핑몰에서 해당 규격 단가를 "
-                            f"찾지 못했습니다 (미등록이거나 업체명 불일치)")
         return found
 
+    jobs = [(sup, canon) for sup in suppliers for canon in canonicals]
     async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
-        groups = await asyncio.gather(*(one(client, s) for s in suppliers))
-    return [it for g in groups for it in g]
+        groups = await asyncio.gather(*(one(client, sup, canon) for sup, canon in jobs))
+    out = [it for g in groups for it in g]
+    for sup in suppliers:
+        if not any(it.get("designatedFor") == sup for it in out):
+            warnings.append(f"지정 공급처 '{sup}' — 종합쇼핑몰에서 해당 규격 단가를 "
+                            f"찾지 못했습니다 (미등록이거나 업체명 불일치)")
+    return out
 
 
-def _demo_designated(keyword: str, suppliers: list[str]) -> list[dict[str, Any]]:
+def _demo_designated(canonicals: list[str], spec_tokens: list[str],
+                     suppliers: list[str]) -> list[dict[str, Any]]:
     """데모 모드용 — 각 지정 공급처를 합성 단가로 생성해 후보 포함을 시연."""
-    base_name = keyword.split()[0] if keyword.split() else "레미콘"
-    spec = " ".join(keyword.split()[1:]) or "25-24-150"
+    base_name = canonicals[0] if canonicals else "레미콘"
+    spec = " ".join(spec_tokens) or "25-24-150"
     out = []
     for i, sup in enumerate(suppliers):
         raw = {
@@ -420,11 +418,10 @@ def _demo_designated(keyword: str, suppliers: list[str]) -> list[dict[str, Any]]
 
 # ── 데모 데이터 ───────────────────────────────────────────────────
 
-def _demo_items(keyword: str) -> list[dict[str, Any]]:
-    """인증키 없이 UI/로직을 확인하기 위한 합성 데이터.
-    검색어에서 규격을 뽑아 흉내내며, 레미콘류 24건 정도 생성."""
-    base_name = keyword.split()[0] if keyword.split() else "레미콘"
-    spec = " ".join(keyword.split()[1:]) or "25-24-150"
+def _demo_items(canonicals: list[str], spec_tokens: list[str]) -> list[dict[str, Any]]:
+    """인증키 없이 UI/로직을 확인하기 위한 합성 데이터. 레미콘류 24건 정도 생성."""
+    base_name = canonicals[0] if canonicals else "레미콘"
+    spec = " ".join(spec_tokens) or "25-24-150"
     # 91,000 ~ 102,000 사이 24건, 일부 전북/인증
     samples = [
         ("○○레미콘(주)", 96500, "전북특별자치도", True, True),
@@ -465,5 +462,7 @@ def _demo_items(keyword: str) -> list[dict[str, Any]]:
             "cntrctCnclsDate": "20260512",
             "prdctIdntNo": 20000000 + i,
         }
-        items.append(normalize_item(raw, "종합쇼핑몰(데모)", []))
+        it = normalize_item(raw, "종합쇼핑몰(데모)", [])
+        it["sourceCanonical"] = base_name
+        items.append(it)
     return items

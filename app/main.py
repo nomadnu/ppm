@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import secrets
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -27,6 +28,8 @@ def _startup() -> None:
     db.init_db()
     db.seed_admin_if_empty()
     db.seed_notes_if_empty()
+    db.seed_synonyms_if_empty()
+    db.load_synonym_cache()
 
 
 # ── 관리자 인증 ───────────────────────────────────────────────────
@@ -64,12 +67,18 @@ async def api_search(
         months = 6
     warnings: list[str] = []
 
+    # 검색어 정규화: 통칭 → 세부품명(복수 가능) + 규격 토큰 (F1 동의어 사전)
+    resolved = search.resolve_query(q, db.synonym_cache())
+    canonicals = resolved["canonicals"]
+    spec_tokens = resolved["specTokens"]
+    normalized_query = " ".join(canonicals + spec_tokens)
+
     # 일반 검색과 지정 공급처(협동조합) 조회를 동시에 실행
     notes = db.match_notes(q)
     raw_items, designated_all = await asyncio.gather(
-        procurement.fetch_items(q, months, warnings),
+        procurement.fetch_items(canonicals, spec_tokens, months, warnings),
         procurement.fetch_supplier_items(
-            q, months, [n["supplier"] for n in notes], warnings),
+            canonicals, spec_tokens, months, [n["supplier"] for n in notes], warnings),
     )
     # 중간가는 일반 시장(raw) 기준으로 산출 — 지정 조합 물량이 median을 왜곡하지 않도록
     market_median = search.compute_summary(list(raw_items)).get("median")
@@ -99,12 +108,27 @@ async def api_search(
     warn = search.sample_warning(summary.get("count", 0))
     if warn:
         warnings.insert(0, warn)
-    if not runtime.is_demo() and summary.get("count", 0) == 0:
-        warnings.append("실 API 결과 0건 — 관리자 메뉴 > 연결 진단(Probe)에서 "
-                        "오퍼레이션 조합이 살아있는지 확인하세요")
+    if not resolved["matched"] and summary.get("count", 0) == 0:
+        warnings.append("조달청 세부품명이 달라 결과가 없을 수 있어요 — 관리자 메뉴의 "
+                        "'품명 사전'에 이 통칭의 세부품명을 등록하면 다음부터 검색됩니다")
+
+    # 세부품명별 요약 (복수 매핑 시 분리 표시 — 자연석 vs 콘크리트처럼 사실상 다른 자재)
+    by_canonical = []
+    if len(canonicals) > 1:
+        for canon in canonicals:
+            prices = [it["price"] for it in items
+                      if it.get("sourceCanonical") == canon and it.get("price")]
+            by_canonical.append({
+                "canonical": canon, "count": len(prices),
+                "median": int(statistics.median(prices)) if prices else None,
+            })
 
     payload: dict[str, Any] = {
         "query": q,
+        "normalizedQuery": normalized_query if resolved["matched"] else None,
+        "matchedAlias": resolved["alias"],
+        "canonicals": canonicals,
+        "byCanonical": by_canonical,
         "months": months,
         "period": _period(months),
         "supplierNotes": notes,
@@ -204,6 +228,36 @@ def api_notes_update(nid: int, body: NoteBody) -> JSONResponse:
 def api_notes_delete(nid: int) -> JSONResponse:
     if not db.delete_note(nid):
         raise HTTPException(404, "메모를 찾을 수 없습니다")
+    return JSONResponse({"ok": True})
+
+
+# ── 품명 동의어 사전 (F1) ─────────────────────────────────────────
+
+class SynonymBody(BaseModel):
+    alias: str
+    canonicals: list[str]
+    extra_filters: list[str] = []
+    verified: bool = False
+
+
+@app.get("/api/synonyms")
+def api_synonyms() -> JSONResponse:
+    return JSONResponse(db.list_synonyms())
+
+
+@app.post("/api/synonyms")
+def api_synonyms_add(body: SynonymBody) -> JSONResponse:
+    if not body.alias.strip() or not [c for c in body.canonicals if c.strip()]:
+        raise HTTPException(400, "통칭과 세부품명은 필수입니다")
+    db.upsert_synonym(body.alias, [c.strip() for c in body.canonicals if c.strip()],
+                      body.extra_filters, body.verified, _now_iso())
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/synonyms/{sid}")
+def api_synonyms_delete(sid: int) -> JSONResponse:
+    if not db.delete_synonym(sid):
+        raise HTTPException(404, "사전 항목을 찾을 수 없습니다")
     return JSONResponse({"ok": True})
 
 
