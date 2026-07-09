@@ -1,5 +1,9 @@
 .env
 *.db
+# Firebase 서비스계정 키 — 절대 커밋 금지
+firebase-key.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
 __pycache__/
 *.pyc
 .venv/

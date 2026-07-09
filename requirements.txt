@@ -1,9 +1,10 @@
-# 관급자재 단가조회 — 배포/실행 의존성 (경량)
+# 관급자재 단가조회 — 배포/실행 의존성
 fastapi>=0.110
 uvicorn[standard]>=0.27
 httpx>=0.27
 python-dotenv>=1.0
 Pillow>=10.2
+firebase-admin>=6.5     # Firestore 저장소 (v0.4)
 
 # (선택) 이미지 저장(F9)에서 나라장터 상세 페이지 실캡처를 쓰려면 아래를 설치.
 #   pip install playwright && python -m playwright install chromium

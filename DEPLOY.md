@@ -22,6 +22,11 @@
    | `SERVICE_KEY` | 조달청 **Decoding 인증키** (로컬에서 쓰던 그 키) |
    | `DEMO_MODE` | `0` (실데이터) |
    | `ADMIN_PASSWORD` | 원하는 관리자 비밀번호 (기본 `5968`에서 변경 권장) |
+   | `FIREBASE_CREDENTIALS` | Firebase 서비스계정 키 **JSON 전체를 한 줄로** 붙여넣기 (v0.4 Firestore) |
+
+   > ⚠ Firestore 전환(v0.4) 후에는 `FIREBASE_CREDENTIALS` 가 **없으면 앱이 기동되지 않습니다**.
+   > 반드시 키를 먼저 넣은 뒤 배포하세요. Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 →
+   > "새 비공개 키 생성"으로 받은 JSON 내용을 그대로 값에 붙여넣으면 됩니다.
 4. **Apply / Deploy** → 몇 분 뒤 `https://ppm-danga.onrender.com` 같은 URL 생성 → 동료에게 공유.
 
 ## 꼭 아시고 계실 점 (무료 플랜)

@@ -1,297 +1,239 @@
-"""SQLite 저장소 — 조회 이력(F6) + 지정 공급처 메모(F7).
+"""Firestore 저장소 (v0.4) — 조회 이력·지정 공급처 메모·품명 동의어 사전·설정.
 
-설계서 6.2 스키마를 그대로 구현. 원본 검색 결과 전체는 저장하지 않고
-요약값과 후보 3선 스냅샷(JSON)만 보존한다.
+Render 무료 인스턴스의 디스크 휘발성으로 SQLite 이력이 유실되던 문제를 해결하기 위해
+저장소를 Firestore로 전환. FastAPI(Render)에서 firebase-admin SDK로 접근하며,
+서비스 계정 키는 환경변수로만 주입한다(코드·저장소에 미포함).
+
+  FIREBASE_CREDENTIALS       서비스계정 키 JSON '문자열' 전체 (Render 권장)
+  FIREBASE_CREDENTIALS_FILE  또는 키 JSON '파일 경로' (로컬 개발 편의)
+
+함수 시그니처는 기존 SQLite 버전과 동일하게 유지해 나머지 코드 변경을 최소화한다.
+문서 ID는 문자열이므로 이력/메모 id 는 str, 동의어 id 는 정규형 alias 이다.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+import os
+import re
+from typing import Any, Optional
 
-from .config import DB_PATH
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS search_history (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    query         TEXT NOT NULL,
-    months        INTEGER NOT NULL,
-    searched_at   TEXT NOT NULL,
-    result_cnt    INTEGER,
-    median_prc    INTEGER,
-    unit          TEXT,
-    pinned        INTEGER DEFAULT 0,
-    candidates    TEXT,          -- 후보 3선 스냅샷 (JSON)
-    sel_company   TEXT,
-    sel_price     INTEGER,
-    sel_spec      TEXT,
-    sel_verify_url TEXT,
-    sel_item_ref  INTEGER,
-    sel_at        TEXT,
-    sel_changed   INTEGER DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_history_query ON search_history(query);
+from .config import ADMIN_PASSWORD_DEFAULT
 
-CREATE TABLE IF NOT EXISTS supplier_notes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    keyword     TEXT NOT NULL,
-    supplier    TEXT NOT NULL,
-    memo        TEXT,
-    contact     TEXT,
-    url         TEXT,
-    updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_notes_keyword ON supplier_notes(keyword);
-
--- 앱 설정 (인증키·데모모드·관리자 비밀번호 해시 등)
-CREATE TABLE IF NOT EXISTS settings (
-    key    TEXT PRIMARY KEY,
-    value  TEXT
-);
-
--- 품명 동의어 사전 (통칭 → 조달청 세부품명 변환, 복수 매핑 지원)
-CREATE TABLE IF NOT EXISTS synonyms (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    alias         TEXT UNIQUE NOT NULL,   -- 정규형(소문자·공백제거)
-    canonicals    TEXT NOT NULL,          -- JSON 배열: 세부품명들
-    extra_filters TEXT,                   -- JSON 배열: 규격 필터에 자동 추가할 키워드
-    verified      INTEGER DEFAULT 0,
-    updated_at    TEXT NOT NULL
-);
-"""
-
-
-@contextmanager
-def get_conn() -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+_db = None
 
 
 def init_db() -> None:
-    with get_conn() as conn:
-        conn.executescript(SCHEMA)
-
-
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    d = dict(row)
-    if d.get("candidates"):
-        try:
-            d["candidates"] = json.loads(d["candidates"])
-        except (json.JSONDecodeError, TypeError):
-            d["candidates"] = []
-    return d
-
-
-# ── 조회 이력 (F6) ────────────────────────────────────────────────
-
-def add_history(
-    query: str,
-    months: int,
-    searched_at: str,
-    result_cnt: int,
-    median_prc: Optional[int],
-    unit: Optional[str],
-    candidates: list[dict[str, Any]],
-) -> int:
-    """검색 실행 시마다 자동 저장. 회차별 보존(갱신하지 않음)."""
-    with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO search_history
-               (query, months, searched_at, result_cnt, median_prc, unit, candidates)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (query, months, searched_at, result_cnt, median_prc, unit,
-             json.dumps(candidates, ensure_ascii=False)),
+    """Firestore 클라이언트 초기화. 자격증명이 없으면 명확한 에러로 기동 중단."""
+    global _db
+    if _db is not None:
+        return
+    raw = os.environ.get("FIREBASE_CREDENTIALS", "").strip()
+    path = os.environ.get("FIREBASE_CREDENTIALS_FILE", "").strip()
+    if raw:
+        cred = credentials.Certificate(json.loads(raw))
+    elif path and os.path.exists(path):
+        cred = credentials.Certificate(path)
+    else:
+        raise RuntimeError(
+            "FIREBASE_CREDENTIALS(키 JSON 문자열) 또는 FIREBASE_CREDENTIALS_FILE(키 파일 경로)가 "
+            "설정되지 않았습니다. Firebase 서비스계정 키를 환경변수로 주입하세요."
         )
-        return int(cur.lastrowid)
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+    _db = firestore.client()
 
 
-def prev_history(query: str, exclude_id: int) -> Optional[dict[str, Any]]:
-    """같은 검색어의 직전 회차(이번 것 제외 최신 1건)."""
-    with get_conn() as conn:
-        row = conn.execute(
-            """SELECT * FROM search_history
-               WHERE query = ? AND id < ?
-               ORDER BY id DESC LIMIT 1""",
-            (query, exclude_id),
-        ).fetchone()
-        return _row_to_dict(row) if row else None
+def _col(name: str):
+    if _db is None:
+        init_db()
+    return _db.collection(name)
 
 
-def list_history(q: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:
-    """이력 목록. 고정(pinned) 우선, 최신순."""
-    with get_conn() as conn:
-        if q:
-            rows = conn.execute(
-                """SELECT * FROM search_history
-                   WHERE query LIKE ?
-                   ORDER BY pinned DESC, id DESC LIMIT ?""",
-                (f"%{q}%", limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT * FROM search_history
-                   ORDER BY pinned DESC, id DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        return [_row_to_dict(r) for r in rows]
-
-
-def get_history(hid: int) -> Optional[dict[str, Any]]:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM search_history WHERE id = ?", (hid,)
-        ).fetchone()
-        return _row_to_dict(row) if row else None
-
-
-def select_candidate(
-    hid: int,
-    company: str,
-    price: Optional[int],
-    spec: Optional[str],
-    verify_url: Optional[str],
-    item_ref: Optional[int],
-    selected_at: str,
-) -> Optional[dict[str, Any]]:
-    """후보(또는 전체 목록) 중 1개 선정 기록. 재선정 시 변경 횟수 증가."""
-    with get_conn() as conn:
-        cur = conn.execute(
-            """UPDATE search_history
-               SET sel_company = ?, sel_price = ?, sel_spec = ?,
-                   sel_verify_url = ?, sel_item_ref = ?, sel_at = ?,
-                   sel_changed = sel_changed + (CASE WHEN sel_company IS NOT NULL THEN 1 ELSE 0 END)
-               WHERE id = ?""",
-            (company, price, spec, verify_url, item_ref, selected_at, hid),
-        )
-        if cur.rowcount == 0:
-            return None
-    return get_history(hid)
-
-
-def prev_selection(query: str, exclude_id: int) -> Optional[str]:
-    """같은 검색어 직전 회차의 선정 업체명."""
-    with get_conn() as conn:
-        row = conn.execute(
-            """SELECT sel_company FROM search_history
-               WHERE query = ? AND id < ? AND sel_company IS NOT NULL
-               ORDER BY id DESC LIMIT 1""",
-            (query, exclude_id),
-        ).fetchone()
-        return row["sel_company"] if row else None
-
-
-def delete_history(hid: int) -> bool:
-    with get_conn() as conn:
-        cur = conn.execute("DELETE FROM search_history WHERE id = ?", (hid,))
-        return cur.rowcount > 0
-
-
-def toggle_pin(hid: int) -> Optional[dict[str, Any]]:
-    with get_conn() as conn:
-        cur = conn.execute(
-            "UPDATE search_history SET pinned = 1 - pinned WHERE id = ?", (hid,)
-        )
-        if cur.rowcount == 0:
-            return None
-    return get_history(hid)
-
-
-# ── 지정 공급처 메모 (F7) ─────────────────────────────────────────
-
-def list_notes() -> list[dict[str, Any]]:
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM supplier_notes ORDER BY keyword, id"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def match_notes(query: str) -> list[dict[str, Any]]:
-    """검색어에 포함된 키워드의 메모 전건. 대소문자·공백 무시 포함 매칭."""
-    normalized = query.replace(" ", "").lower()
-    result = []
-    for note in list_notes():
-        kw = (note["keyword"] or "").replace(" ", "").lower()
-        if kw and kw in normalized:
-            result.append(note)
-    return result
-
-
-def add_note(keyword: str, supplier: str, memo: Optional[str],
-             contact: Optional[str], url: Optional[str], updated_at: str) -> int:
-    with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO supplier_notes (keyword, supplier, memo, contact, url, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (keyword, supplier, memo, contact, url, updated_at),
-        )
-        return int(cur.lastrowid)
-
-
-def update_note(nid: int, keyword: str, supplier: str, memo: Optional[str],
-                contact: Optional[str], url: Optional[str], updated_at: str) -> bool:
-    with get_conn() as conn:
-        cur = conn.execute(
-            """UPDATE supplier_notes
-               SET keyword = ?, supplier = ?, memo = ?, contact = ?, url = ?, updated_at = ?
-               WHERE id = ?""",
-            (keyword, supplier, memo, contact, url, updated_at, nid),
-        )
-        return cur.rowcount > 0
-
-
-def delete_note(nid: int) -> bool:
-    with get_conn() as conn:
-        cur = conn.execute("DELETE FROM supplier_notes WHERE id = ?", (nid,))
-        return cur.rowcount > 0
-
-
-# ── 설정 (settings) ──────────────────────────────────────────────
+# ── 설정 (settings) — 인증키·데모모드·관리자 비밀번호 해시 ──────────
 
 def get_setting(key: str) -> Optional[str]:
-    with get_conn() as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-        return row["value"] if row else None
+    doc = _col("settings").document(key).get()
+    return doc.to_dict().get("value") if doc.exists else None
 
 
 def set_setting(key: str, value: Optional[str]) -> None:
-    with get_conn() as conn:
-        conn.execute(
-            """INSERT INTO settings (key, value) VALUES (?, ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
-            (key, value),
-        )
+    _col("settings").document(key).set({"value": value})
 
 
 def seed_admin_if_empty() -> None:
-    """관리자 비밀번호 해시가 없으면 기본값으로 시드."""
     import hashlib
-    from .config import ADMIN_PASSWORD_DEFAULT
     if get_setting("admin_pw_hash") is None:
         h = hashlib.sha256(ADMIN_PASSWORD_DEFAULT.encode("utf-8")).hexdigest()
         set_setting("admin_pw_hash", h)
 
 
-# ── 품명 동의어 사전 (synonyms) ───────────────────────────────────
+# ── 조회 이력 (search_history) ────────────────────────────────────
+
+def add_history(query: str, months: int, searched_at: str, result_cnt: int,
+                median_prc: Optional[int], unit: Optional[str],
+                candidates: list[dict[str, Any]]) -> str:
+    ref = _col("search_history").document()
+    ref.set({
+        "query": query, "months": months, "searched_at": searched_at,
+        "result_cnt": result_cnt, "median_prc": median_prc, "unit": unit,
+        "pinned": 0, "candidates": candidates,
+        "sel_company": None, "sel_price": None, "sel_spec": None,
+        "sel_verify_url": None, "sel_item_ref": None, "sel_at": None,
+        "sel_changed": 0,
+    })
+    return ref.id
+
+
+def get_history(hid: str) -> Optional[dict[str, Any]]:
+    doc = _col("search_history").document(hid).get()
+    if not doc.exists:
+        return None
+    d = doc.to_dict()
+    d["id"] = doc.id
+    return d
+
+
+def _history_by_query(query: str) -> list[dict[str, Any]]:
+    """같은 검색어의 이력 전건(파이썬 정렬 — 복합 색인 불필요)."""
+    rows = [{**d.to_dict(), "id": d.id}
+            for d in _col("search_history").where("query", "==", query).stream()]
+    rows.sort(key=lambda r: r.get("searched_at") or "", reverse=True)
+    return rows
+
+
+def prev_history(query: str, exclude_id: str) -> Optional[dict[str, Any]]:
+    for r in _history_by_query(query):
+        if r["id"] != exclude_id:
+            return r
+    return None
+
+
+def prev_selection(query: str, exclude_id: str) -> Optional[str]:
+    for r in _history_by_query(query):
+        if r["id"] != exclude_id and r.get("sel_company"):
+            return r["sel_company"]
+    return None
+
+
+def list_history(q: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:
+    # searched_at 단일 필드 정렬(자동 색인) 후 파이썬에서 고정 우선 재정렬
+    docs = [{**d.to_dict(), "id": d.id}
+            for d in _col("search_history")
+            .order_by("searched_at", direction=firestore.Query.DESCENDING)
+            .limit(200).stream()]
+    if q:
+        docs = [d for d in docs if q in (d.get("query") or "")]
+    docs.sort(key=lambda d: (d.get("pinned") or 0, d.get("searched_at") or ""),
+              reverse=True)
+    return docs[:limit]
+
+
+def select_candidate(hid: str, company: str, price: Optional[int], spec: Optional[str],
+                     verify_url: Optional[str], item_ref: Optional[int],
+                     selected_at: str) -> Optional[dict[str, Any]]:
+    ref = _col("search_history").document(hid)
+    doc = ref.get()
+    if not doc.exists:
+        return None
+    cur = doc.to_dict()
+    changed = (cur.get("sel_changed") or 0) + (1 if cur.get("sel_company") else 0)
+    ref.update({
+        "sel_company": company, "sel_price": price, "sel_spec": spec,
+        "sel_verify_url": verify_url, "sel_item_ref": item_ref,
+        "sel_at": selected_at, "sel_changed": changed,
+    })
+    return get_history(hid)
+
+
+def delete_history(hid: str) -> bool:
+    ref = _col("search_history").document(hid)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+def toggle_pin(hid: str) -> Optional[dict[str, Any]]:
+    ref = _col("search_history").document(hid)
+    doc = ref.get()
+    if not doc.exists:
+        return None
+    ref.update({"pinned": 0 if doc.to_dict().get("pinned") else 1})
+    return get_history(hid)
+
+
+# ── 지정 공급처 메모 (supplier_notes) ─────────────────────────────
+
+def list_notes() -> list[dict[str, Any]]:
+    rows = [{**d.to_dict(), "id": d.id} for d in _col("supplier_notes").stream()]
+    rows.sort(key=lambda r: (r.get("keyword") or "", r.get("supplier") or ""))
+    return rows
+
+
+def match_notes(query: str) -> list[dict[str, Any]]:
+    normalized = query.replace(" ", "").lower()
+    out = []
+    for note in list_notes():
+        kw = (note.get("keyword") or "").replace(" ", "").lower()
+        if kw and kw in normalized:
+            out.append(note)
+    return out
+
+
+def add_note(keyword: str, supplier: str, memo: Optional[str], contact: Optional[str],
+             url: Optional[str], updated_at: str) -> str:
+    ref = _col("supplier_notes").document()
+    ref.set({"keyword": keyword, "supplier": supplier, "memo": memo,
+             "contact": contact, "url": url, "updated_at": updated_at})
+    return ref.id
+
+
+def update_note(nid: str, keyword: str, supplier: str, memo: Optional[str],
+                contact: Optional[str], url: Optional[str], updated_at: str) -> bool:
+    ref = _col("supplier_notes").document(nid)
+    if not ref.get().exists:
+        return False
+    ref.update({"keyword": keyword, "supplier": supplier, "memo": memo,
+                "contact": contact, "url": url, "updated_at": updated_at})
+    return True
+
+
+def delete_note(nid: str) -> bool:
+    ref = _col("supplier_notes").document(nid)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+def seed_notes_if_empty() -> None:
+    from datetime import datetime, timezone
+    if list_notes():
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    seeds = [
+        ("레미콘", "전북서부레미콘사업협동조합",
+         "관급 레미콘은 조합 경유 구매. 쇼핑몰 단가는 참고만 (서부권: 군산·김제·부안 등)", "063-XXX-XXXX", None),
+        ("아스콘", "전북아스콘공업협동조합",
+         "관급 아스콘은 조합 경유 수의계약 — 종합쇼핑몰 미등록일 수 있어 단가 자동조회 제한적", "063-XXX-XXXX", None),
+    ]
+    for kw, sup, memo, contact, url in seeds:
+        add_note(kw, sup, memo, contact, url, now)
+
+
+# ── 품명 동의어 사전 (synonyms) — 문서 ID = 정규형 alias ───────────
 
 def _norm_alias(text: str) -> str:
-    """alias 정규형: 공백 제거 + 소문자."""
-    import re
     return re.sub(r"\s+", "", str(text or "")).lower()
 
 
-# 검색 요청마다 Firestore/DB 전건 읽기 방지 — 메모리 캐시
 _SYN_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def load_synonym_cache() -> None:
-    """synonyms 전건을 메모리 캐시에 적재 (기동 시·변경 시 호출)."""
     _SYN_CACHE.clear()
     for row in list_synonyms():
         _SYN_CACHE[row["alias"]] = {
@@ -308,43 +250,36 @@ def synonym_cache() -> dict[str, dict[str, Any]]:
 
 
 def list_synonyms() -> list[dict[str, Any]]:
-    with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM synonyms ORDER BY alias").fetchall()
     out = []
-    for r in rows:
-        d = dict(r)
-        for k in ("canonicals", "extra_filters"):
-            try:
-                d[k] = json.loads(d[k]) if d[k] else []
-            except (json.JSONDecodeError, TypeError):
-                d[k] = []
-        d["verified"] = bool(d["verified"])
-        out.append(d)
+    for d in _col("synonyms").stream():
+        v = d.to_dict()
+        out.append({
+            "id": d.id, "alias": v.get("alias") or d.id,
+            "canonicals": v.get("canonicals") or [],
+            "extra_filters": v.get("extra_filters") or [],
+            "verified": bool(v.get("verified")),
+        })
+    out.sort(key=lambda x: x["alias"] or "")
     return out
 
 
 def upsert_synonym(alias: str, canonicals: list[str], extra_filters: list[str],
                    verified: bool, updated_at: str) -> None:
     a = _norm_alias(alias)
-    with get_conn() as conn:
-        conn.execute(
-            """INSERT INTO synonyms (alias, canonicals, extra_filters, verified, updated_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(alias) DO UPDATE SET
-                 canonicals=excluded.canonicals, extra_filters=excluded.extra_filters,
-                 verified=excluded.verified, updated_at=excluded.updated_at""",
-            (a, json.dumps(canonicals, ensure_ascii=False),
-             json.dumps(extra_filters or [], ensure_ascii=False),
-             1 if verified else 0, updated_at),
-        )
+    _col("synonyms").document(a).set({
+        "alias": a, "canonicals": canonicals, "extra_filters": extra_filters or [],
+        "verified": bool(verified), "updated_at": updated_at,
+    })
     load_synonym_cache()
 
 
-def delete_synonym(sid: int) -> bool:
-    with get_conn() as conn:
-        cur = conn.execute("DELETE FROM synonyms WHERE id = ?", (sid,))
+def delete_synonym(sid: str) -> bool:
+    ref = _col("synonyms").document(sid)
+    if not ref.get().exists:
+        return False
+    ref.delete()
     load_synonym_cache()
-    return cur.rowcount > 0
+    return True
 
 
 def seed_synonyms_if_empty() -> None:
@@ -385,21 +320,3 @@ SEED_SYNONYMS: list[tuple] = [
     ("레미콘", ["레미콘"], [], True),
     ("파형강관", ["파형강관"], [], True),
 ]
-
-
-def seed_notes_if_empty() -> None:
-    """초기 데이터: 레미콘 2곳, 아스콘 1곳 (설계서 확정)."""
-    from datetime import datetime, timezone
-    if list_notes():
-        return
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    # 조합명은 조달청 종합쇼핑몰 실데이터 기준(2026-07 확인). 공구별 권역 담당은 정미님이 확정.
-    # 조합명은 조달청 종합쇼핑몰 실데이터 기준(2026-07 확인). cntrctCorpNm 부분매칭용 정식명 사용.
-    seeds = [
-        ("레미콘", "전북서부레미콘사업협동조합",
-         "관급 레미콘은 조합 경유 구매. 쇼핑몰 단가는 참고만 (서부권: 군산·김제·부안 등)", "063-XXX-XXXX", None),
-        ("아스콘", "전북아스콘공업협동조합",
-         "관급 아스콘은 조합 경유 수의계약 — 종합쇼핑몰 미등록일 수 있어 단가 자동조회 제한적", "063-XXX-XXXX", None),
-    ]
-    for kw, sup, memo, contact, url in seeds:
-        add_note(kw, sup, memo, contact, url, now)

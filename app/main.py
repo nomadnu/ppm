@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from . import capture, config, db, procurement, runtime, search
 
-app = FastAPI(title="관급자재 단가조회", version="0.3.4")
+app = FastAPI(title="관급자재 단가조회", version="0.5")
 
 STATIC_DIR = config.ROOT / "static"
 
@@ -164,7 +164,7 @@ class SelectBody(BaseModel):
 
 
 @app.post("/api/history/{hid}/select")
-def api_select(hid: int, body: SelectBody) -> JSONResponse:
+def api_select(hid: str, body: SelectBody) -> JSONResponse:
     row = db.select_candidate(hid, body.company, body.price, body.spec,
                               body.verifyUrl, body.itemRef, _now_iso())
     if row is None:
@@ -180,14 +180,14 @@ def api_history(q: Optional[str] = None, limit: int = 20) -> JSONResponse:
 
 
 @app.delete("/api/history/{hid}")
-def api_history_delete(hid: int) -> JSONResponse:
+def api_history_delete(hid: str) -> JSONResponse:
     if not db.delete_history(hid):
         raise HTTPException(404, "이력을 찾을 수 없습니다")
     return JSONResponse({"ok": True})
 
 
 @app.patch("/api/history/{hid}/pin")
-def api_history_pin(hid: int) -> JSONResponse:
+def api_history_pin(hid: str) -> JSONResponse:
     row = db.toggle_pin(hid)
     if row is None:
         raise HTTPException(404, "이력을 찾을 수 없습니다")
@@ -217,7 +217,7 @@ def api_notes_add(body: NoteBody) -> JSONResponse:
 
 
 @app.put("/api/notes/{nid}")
-def api_notes_update(nid: int, body: NoteBody) -> JSONResponse:
+def api_notes_update(nid: str, body: NoteBody) -> JSONResponse:
     if not db.update_note(nid, body.keyword, body.supplier, body.memo,
                           body.contact, body.url, _now_iso()):
         raise HTTPException(404, "메모를 찾을 수 없습니다")
@@ -225,7 +225,7 @@ def api_notes_update(nid: int, body: NoteBody) -> JSONResponse:
 
 
 @app.delete("/api/notes/{nid}")
-def api_notes_delete(nid: int) -> JSONResponse:
+def api_notes_delete(nid: str) -> JSONResponse:
     if not db.delete_note(nid):
         raise HTTPException(404, "메모를 찾을 수 없습니다")
     return JSONResponse({"ok": True})
@@ -255,7 +255,7 @@ def api_synonyms_add(body: SynonymBody) -> JSONResponse:
 
 
 @app.delete("/api/synonyms/{sid}")
-def api_synonyms_delete(sid: int) -> JSONResponse:
+def api_synonyms_delete(sid: str) -> JSONResponse:
     if not db.delete_synonym(sid):
         raise HTTPException(404, "사전 항목을 찾을 수 없습니다")
     return JSONResponse({"ok": True})

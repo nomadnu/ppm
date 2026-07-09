@@ -1,20 +1,43 @@
-"""런타임 설정 — 인증키·데모모드를 DB(settings) 우선으로 해석.
+"""런타임 설정 — 인증키·데모모드를 저장소(settings) 우선으로 해석.
 
-.env 값은 초기 시드로만 쓰이고, 관리자 메뉴에서 저장한 DB 값이 우선한다.
-재시작 없이 인증키를 바꿀 수 있도록 매 호출 시 DB를 읽는다(로컬 SQLite라 저렴).
+.env 값은 초기 시드로만 쓰이고, 관리자 메뉴에서 저장한 값이 우선한다.
+Firestore 읽기 비용·지연을 줄이기 위해 메모리 캐시를 두고, 관리자 변경 시에만 갱신한다.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from . import config, db
+
+_cache: dict[str, Optional[str]] = {}
+_loaded = False
+
+
+def _load() -> None:
+    global _loaded
+    if _loaded:
+        return
+    _cache["service_key"] = db.get_setting("service_key")
+    _cache["demo_mode"] = db.get_setting("demo_mode")
+    _loaded = True
+
+
+def refresh() -> None:
+    """관리자가 설정을 바꾼 뒤 캐시를 무효화."""
+    global _loaded
+    _loaded = False
+    _cache.clear()
 
 
 def get_service_key() -> str:
-    return (db.get_setting("service_key") or config.SERVICE_KEY or "").strip()
+    _load()
+    return (_cache.get("service_key") or config.SERVICE_KEY or "").strip()
 
 
 def demo_flag() -> bool:
     """관리자가 명시 설정한 데모 플래그(없으면 .env 기본값)."""
-    v = db.get_setting("demo_mode")
+    _load()
+    v = _cache.get("demo_mode")
     if v is None:
         return config.DEMO_MODE_ENV
     return v == "1"
@@ -27,10 +50,12 @@ def is_demo() -> bool:
 
 def set_service_key(key: str) -> None:
     db.set_setting("service_key", (key or "").strip())
+    refresh()
 
 
 def set_demo(flag: bool) -> None:
     db.set_setting("demo_mode", "1" if flag else "0")
+    refresh()
 
 
 def masked_key() -> str:

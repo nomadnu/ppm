@@ -19,7 +19,7 @@ DEMO_MODE_ENV: bool = os.getenv("DEMO_MODE", "1").strip() == "1"
 # 관리자 초기 비밀번호 (설계 요청값). DB에 해시로 시드되며 관리자 메뉴에서 변경 가능.
 ADMIN_PASSWORD_DEFAULT: str = os.getenv("ADMIN_PASSWORD", "5968").strip()
 
-DB_PATH: Path = ROOT / os.getenv("DB_PATH", "ppm.db")
+# 저장소는 Firestore(v0.4) — 로컬 DB 파일 경로 없음. app/db.py 참조.
 
 # 조달청 오픈 API 게이트웨이 (data.go.kr)
 # 서비스별 base 경로는 procurement.py 의 후보 목록에서 관리한다.
