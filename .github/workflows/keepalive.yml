@@ -1,0 +1,17 @@
+name: keep-alive
+
+# Render 무료 플랜이 잠들지 않도록 평일 업무시간에 주기적으로 URL을 깨운다.
+# GitHub Actions cron 은 UTC 기준 → KST(UTC+9) 09:00~18:59 = UTC 00:00~09:59
+on:
+  schedule:
+    - cron: "*/10 0-9 * * 1-5"   # 10분마다, 평일(월~금), KST 09~18시
+  workflow_dispatch:             # 수동 실행 버튼
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake Render service
+        run: |
+          echo "ping $(date -u) UTC"
+          curl -sS -m 90 -o /dev/null -w "HTTP %{http_code}\n" https://ppm-danga.onrender.com/ || true
