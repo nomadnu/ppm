@@ -311,6 +311,15 @@ function render(){
     html += `<div class="hint">복수 세부품명은 사실상 다른 자재(예: 자연석 vs 콘크리트)일 수 있어 분리 표기합니다.</div></div>`;
   }
 
+  // 출처별 요약 (계약단가 vs 조사가격 분리) — 지시서 #3 작업 1-4
+  if(d.bySource && d.bySource.length){
+    html += `<div class="panel"><h2>출처별 요약 (성격이 다른 데이터라 분리)</h2>`;
+    d.bySource.forEach(b=>{
+      html += `<div class="num">· <b>${esc(b.source)}</b> — ${b.count}건 · 최저 ${fmt(b.min)} · 중간 ${fmt(b.median)} · 최고 ${fmt(b.max)}</div>`;
+    });
+    html += `<div class="hint">종합쇼핑몰=계약단가, 가격정보현황=조달청 조사가격. 중간가 비교 시 같은 출처끼리 보세요.</div></div>`;
+  }
+
   // 요약 (F2)
   html += `<div class="panel"><h2>요약</h2><div class="summary-grid">
     <div><div class="lbl">결과</div><div class="big num">${s.count}건</div></div>
@@ -334,7 +343,7 @@ function render(){
       const prev = (s.prevSelected && c.company===s.prevSelected) ? '<span class="b-prev">지난 회차 선정</span>' : '';
       html += `<div class="card${c.isDesignated?' designated':''}" id="card-${c.rank}">
         <div class="badges">${badge(c)}${prev}</div>
-        <div class="company">${esc(c.company||'-')}</div>
+        <div class="company">${coName(c)}</div>
         <div class="price num">${fmt(c.price)}원</div>
         <div class="meta">${esc(c.spec||'')} · ${esc(c.region||'')}<br>${esc(c.contractDate||'')} · ${esc(c.source||'')}</div>
         <div class="verify-row">
@@ -354,7 +363,7 @@ function render(){
     <th>업체명</th><th>소재지</th><th>계약일</th><th>출처</th><th>검증</th><th></th></tr>`;
   d.items.forEach((it,i)=>{
     html += `<tr><td>${badge(it)}</td><td>${esc(it.name)}</td><td>${esc(it.spec)}</td>
-      <td class="r num">${fmt(it.price)}</td><td>${esc(it.unit)}</td><td>${esc(it.company)}</td>
+      <td class="r num">${fmt(it.price)}</td><td>${esc(it.unit)}</td><td>${coName(it)}</td>
       <td>${esc(it.region)}</td><td>${esc(it.contractDate||'')}</td><td>${esc(it.source)}</td>
       <td>${it.verifyUrl?`<a class="link" href="${esc(it.verifyUrl)}" target="_blank" rel="noopener">상세↗</a>`:''}${it.identNo?` <button class="copybtn" onclick="copyIdent('${esc(it.identNo)}')" title="물품식별번호 복사">📋</button>`:''}</td>
       <td class="row-actions"><button onclick='selectItem(${JSON.stringify({...it,itemRef:i}).replace(/'/g,"&#39;")}, null)'>선정</button></td></tr>`;
@@ -487,6 +496,12 @@ function copyIdent(no){
   (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject())
     .then(()=>toast('물품식별번호 '+txt+' 복사됨 — 나라장터에서 붙여넣어 검색하세요'))
     .catch(()=>{ prompt('물품식별번호 (복사하세요)', txt); });
+}
+
+function coName(it){ // 조사가격(가격정보현황)은 업체가 없음
+  const c=(it.company||'').trim();
+  if(c) return esc(c);
+  return it.isSurveyPrice ? '<span class="muted">해당 없음(조사가격)</span>' : '-';
 }
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

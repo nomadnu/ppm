@@ -28,10 +28,25 @@ def normalize_spec_token(tok: str) -> str:
     return _HD_RE.sub(r"D\1", t).strip()
 
 
+# 수식어(접두) — alias 매칭 실패 시 벗겨내고 재시도 (지시서 #3 작업 3)
+_ALIAS_MODIFIER_RE = re.compile(r"(?i)^\s*(조립식|프리캐스트|pc|pe)\s*")
+
+
 def resolve_query(query: str, syn_cache: dict[str, dict]) -> dict[str, Any]:
-    """검색어 → {alias, canonicals[], specTokens[], entry}.
-    앞 토큰 연접이 사전 alias와 일치하면 세부품명으로 변환하고 나머지를 규격부로.
-    실패 시 첫 토큰을 품명으로(변환 없음)."""
+    """검색어 → {alias, canonicals[], specTokens[], entry}. 사전 alias 매칭.
+    실패 시 앞쪽 수식어(조립식·PC 등)를 벗기고 한 번 더 시도한다."""
+    r = _resolve_once(query, syn_cache)
+    if r["matched"]:
+        return r
+    stripped = _ALIAS_MODIFIER_RE.sub("", query, count=1).strip()
+    if stripped and stripped != query.strip():
+        r2 = _resolve_once(stripped, syn_cache)
+        if r2["matched"]:
+            return r2
+    return r
+
+
+def _resolve_once(query: str, syn_cache: dict[str, dict]) -> dict[str, Any]:
     tokens = query.split()
     best_alias, consumed = None, 0
     joined = ""
@@ -99,6 +114,38 @@ def compute_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "median": median,
         "max": int(hi),
     }
+
+
+def sanity_filter_prices(items: list[dict[str, Any]], warnings: list[str]) -> int:
+    """단가 타당성 검증(지시서 #3 작업 1-3) — 출처 단위로 ID성/비정상 단가를 기각.
+    (a) 10억 초과·0 이하  (b) 정렬 시 인접 차이가 대부분 1~2인 연속 정수(거대값) → ID로 판정.
+    걸린 건은 price=None(중간가 계산 제외). 기각 건수를 반환하고 경고를 추가한다."""
+    from collections import defaultdict
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for it in items:
+        p = it.get("price")
+        if isinstance(p, (int, float)):
+            groups[it.get("source") or ""].append(it)
+
+    excluded = 0
+    for group in groups.values():
+        prices = sorted(g["price"] for g in group)
+        anyhuge = any(p > 1_000_000_000 or p <= 0 for p in prices)
+        consec = False
+        if len(prices) >= 4:
+            diffs = [prices[i + 1] - prices[i] for i in range(len(prices) - 1)]
+            near1 = sum(1 for d in diffs if 0 <= d <= 2) / len(diffs)
+            consec = near1 > 0.7 and prices[-1] > 1_000_000
+        if anyhuge or consec:
+            for g in group:
+                g["price"] = None
+                g["priceInvalid"] = True
+            excluded += len(group)
+
+    if excluded:
+        warnings.append(f"단가 필드를 확인할 수 없어 제외된 결과 {excluded}건 "
+                        f"(ID·비정상값 감지 — 틀린 단가 대신 제외 처리)")
+    return excluded
 
 
 def _nearest_index(items: list[dict[str, Any]], median: int) -> int:
@@ -180,6 +227,7 @@ def _cand_card(it: dict[str, Any], idx: int, rank: int) -> dict[str, Any]:
         "isCertified": bool(it.get("isCertified")),
         "isDesignated": bool(it.get("isDesignated")),
         "isOutlier": bool(it.get("isOutlier")),
+        "isSurveyPrice": bool(it.get("isSurveyPrice")),
         "contractDate": it.get("contractDate"),
         "source": it.get("source"),
         "itemRef": idx,

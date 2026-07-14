@@ -95,10 +95,25 @@ async def api_search(
     designated = search.reduce_designated(designated_all, market_median)
     all_items = search.merge_designated(raw_items, designated)
 
+    # 단가 타당성 검증 (ID·비정상값 기각) — 틀린 단가 방어 (지시서 #3 작업 1-3)
+    search.sanity_filter_prices(all_items, warnings)
+
     summary = search.compute_summary(all_items)
     median = summary.get("median")
     items = search.sort_items(all_items, median)
     candidates = search.pick_candidates(items, median)
+
+    # 출처별 요약 분리 (계약단가 vs 조사가격은 성격이 달라 분리) — 작업 1-4
+    by_source = []
+    src_prices: dict[str, list[int]] = {}
+    for it in items:
+        p = it.get("price")
+        if isinstance(p, (int, float)) and p > 0:
+            src_prices.setdefault(it.get("source") or "", []).append(int(p))
+    if len(src_prices) > 1:
+        for s, ps in src_prices.items():
+            by_source.append({"source": s, "count": len(ps), "min": min(ps),
+                              "median": int(statistics.median(ps)), "max": max(ps)})
 
     # 이력 자동 저장 (F6)
     unit = next((it.get("unit") for it in items if it.get("unit")), None)
@@ -147,6 +162,7 @@ async def api_search(
         "nameSuggestions": name_suggestions,
         "canonicals": canonicals,
         "byCanonical": by_canonical,
+        "bySource": by_source,
         "months": months,
         "period": _period(months),
         "supplierNotes": notes,

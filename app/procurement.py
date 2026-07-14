@@ -123,6 +123,27 @@ def _find(raw: dict[str, Any], substrs: tuple[str, ...], numeric: bool = False) 
     return None
 
 
+# ── 단가 추출 (지시서 #3 작업 1-2) ────────────────────────────────
+# ID성 필드(가격공고번호 등)를 단가로 오인하지 않도록 제외 + 화이트리스트 우선순위.
+_PRICE_EXCLUDE = ("no", "id", "sn", "seq", "regno", "mngno", "idnt", "num", "code", "cd")
+_PRICE_WHITELIST = ("uprc", "untpc", "prce", "price", "amt")
+
+
+def _extract_price(raw: dict[str, Any]) -> Optional[int]:
+    """단가 필드 추출. 키에 ID성 토큰이 있으면 제외하고, 화이트리스트 우선순위로 탐색."""
+    for token in _PRICE_WHITELIST:
+        for k, v in raw.items():
+            lk = k.lower()
+            if token not in lk:
+                continue
+            if any(x in lk for x in _PRICE_EXCLUDE):   # prceNticeNo 등 ID 제외
+                continue
+            n = _to_number(v)
+            if n is not None and n > 0:
+                return n
+    return None
+
+
 _SIDO = ("서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
          "경기", "강원", "충북", "충남", "전북", "전라북", "전남", "전라남",
          "경북", "경상북", "경남", "경상남", "제주")
@@ -139,17 +160,20 @@ def _scan_region(raw: dict[str, Any]) -> Optional[str]:
 
 def normalize_item(raw: dict[str, Any], source: str, warnings: list[str]) -> dict[str, Any]:
     """원본 응답 1건 → 표준 스키마. 매핑 실패는 빈 값 + 경고."""
-    price = _find(raw, ("Uprc", "Prce", "Amt"), numeric=True)
-    name = _find(raw, ("prdctIdntNoNm", "PrdctNm", "ClsfcNoNm"))
-    spec = _find(raw, ("Spec", "Stndrd"))
+    price = _extract_price(raw)
+    name = _find(raw, ("prdctIdntNoNm", "krnPrdctNm", "PrdctNm", "ClsfcNoNm"))
+    spec = _find(raw, ("prdctSpecNm", "Spec", "Stndrd"))
     unit = _find(raw, ("Unit", "prdctUnit"))
     company = _find(raw, ("CorpNm", "EntrpsNm", "scsbidCorpNm"))
     region = _find(raw, ("RgnNm", "Adrs")) or _scan_region(raw)
 
     certified, cert_info = _detect_cert(raw)
 
-    contract_date = _find(raw, ("CntrctDt", "CntrctDate", "cntrctCnclsDate"))
+    contract_date = _find(raw, ("CntrctDt", "CntrctDate", "cntrctCnclsDate", "nticeDt"))
     contract_date = _fmt_date(contract_date)
+
+    # 조사가격(가격정보현황)은 업체·지역·계약일이 없는 성격 (지시서 #3 작업 1-5)
+    is_survey = "가격정보" in source
 
     if price is None:
         warnings.append(f"단가 매핑 실패: keys={list(raw.keys())[:8]}")
@@ -166,6 +190,7 @@ def normalize_item(raw: dict[str, Any], source: str, warnings: list[str]) -> dic
         "certInfo": cert_info,
         "contractDate": contract_date,
         "source": source,
+        "isSurveyPrice": is_survey,
         "imageUrl": _find(raw, ("prdctImgUrl", "ImgUrl")) or "",
         "identNo": _find(raw, ("prdctIdntNo", "goodsIdntfcNo")) or "",
     }
@@ -308,12 +333,46 @@ async def probe() -> list[dict[str, Any]]:
     return report
 
 
+_SPEC_FW = {0xFF01 + i: 0x21 + i for i in range(94)}   # 전각 → 반각
+
+
+def _norm_spec(s: str) -> str:
+    """규격 정규화: 전각→반각, 소문자, ×·x·* → '*' 통일, 공백 제거 (지시서 #3 작업 2)."""
+    t = str(s or "").translate(_SPEC_FW).lower()
+    t = re.sub(r"[×✕╳*x]", "*", t)
+    return re.sub(r"\s+", "", t)
+
+
+def _nums(s: str) -> list[str]:
+    """규격 문자열에서 숫자 시퀀스만 순서대로 추출. 예: 'M20*220mm' → ['20','220']."""
+    return re.findall(r"\d+", _norm_spec(s))
+
+
+def _num_subseq(needle: list[str], hay: list[str]) -> bool:
+    """needle 숫자열이 hay 숫자열의 '순서 유지 부분수열'이면 True."""
+    i = 0
+    for h in hay:
+        if i < len(needle) and h == needle[i]:
+            i += 1
+    return i == len(needle)
+
+
 def _spec_match(item: dict[str, Any], spec_tokens: list[str]) -> bool:
-    """규격 토큰이 모두 품목명/규격 문자열에 포함되면 통과(공백 무시)."""
+    """규격 매칭 — (1)정규화 문자열 포함 OR (2)숫자 시퀀스 부분수열. 둘 중 하나면 통과."""
     if not spec_tokens:
         return True
-    hay = f"{item.get('spec', '')} {item.get('name', '')}".lower().replace(" ", "")
-    return all(tok.lower().replace(" ", "") in hay for tok in spec_tokens)
+    raw_hay = f"{item.get('spec', '')} {item.get('name', '')}"
+    hay = _norm_spec(raw_hay)
+    hay_nums = _nums(raw_hay)
+    for tok in spec_tokens:
+        t = _norm_spec(tok)
+        if t and t in hay:
+            continue
+        tnums = _nums(tok)
+        if tnums and _num_subseq(tnums, hay_nums):
+            continue
+        return False
+    return True
 
 
 async def fetch_items(canonicals: list[str], spec_tokens: list[str],
