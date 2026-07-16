@@ -450,18 +450,25 @@ async function loadHistory(){
   el.innerHTML = rows.map(h=>{
     const sel = h.sel_company ? ` · 선정:<b>${esc(h.sel_company)}</b> ${fmt(h.sel_price)}원` : '';
     return `<div class="hist-item">
-      <button title="고정" onclick="pinHist(${h.id})">${h.pinned?'📌':'☆'}</button>
+      <button title="고정" onclick="pinHist('${esc(h.id)}')">${h.pinned?'📌':'☆'}</button>
       <span class="grow"><b>${esc(h.query)}</b> · ${h.months}개월 · ${h.result_cnt||0}건 ·
         중간가 <span class="num">${fmt(h.median_prc)}</span>원${sel}
         <span class="muted"> · ${esc((h.searched_at||'').slice(0,10))}</span></span>
       <button onclick="doSearch('${esc(h.query)}')">재조회</button>
-      <button onclick="delHist(${h.id})">🗑</button>
+      <button onclick="delHist('${esc(h.id)}')">🗑</button>
     </div>`;
   }).join('');
 }
-async function pinHist(id){ await fetch(`/api/history/${id}/pin`,{method:'PATCH'}); loadHistory(); }
+async function pinHist(id){
+  const r=await fetch(`/api/history/${encodeURIComponent(id)}/pin`,{method:'PATCH'});
+  if(!r.ok){ toast('고정 실패'); return; }
+  loadHistory();
+}
 async function delHist(id){ if(!confirm('이력을 삭제할까요?'))return;
-  await fetch(`/api/history/${id}`,{method:'DELETE'}); loadHistory(); }
+  const r=await fetch(`/api/history/${encodeURIComponent(id)}`,{method:'DELETE'});
+  if(!r.ok){ toast('삭제 실패'); return; }
+  loadHistory();
+}
 
 // ── 공급처 메모 관리 (F7) ──
 const notesDlg = document.getElementById('notesDlg');
@@ -473,7 +480,7 @@ async function loadNotes(){
       ${n.contact?' · ☎'+esc(n.contact):''}
       <div class="muted">${esc(n.memo||'')} <span class="hint">(수정 ${esc((n.updated_at||'').slice(0,10))})</span></div></span>
       <button onclick='editNote(${JSON.stringify(n).replace(/'/g,"&#39;")})'>수정</button>
-      <button onclick="delNote(${n.id})">🗑</button></div>`).join('') || '<span class="muted">메모 없음</span>';
+      <button onclick="delNote('${esc(n.id)}')">🗑</button></div>`).join('') || '<span class="muted">메모 없음</span>';
 }
 function resetNoteForm(){ ['id','keyword','supplier','contact','url','memo'].forEach(k=>document.getElementById('nf_'+k).value=''); }
 function editNote(n){ document.getElementById('nf_id').value=n.id;
@@ -488,7 +495,7 @@ async function saveNote(){
   resetNoteForm(); loadNotes(); toast('저장됨');
 }
 async function delNote(id){ if(!confirm('삭제할까요?'))return;
-  await fetch(`/api/notes/${id}`,{method:'DELETE'}); loadNotes(); }
+  await fetch(`/api/notes/${encodeURIComponent(id)}`,{method:'DELETE'}); loadNotes(); }
 function val(id){ return document.getElementById(id).value.trim()||null; }
 
 function copyIdent(no){
@@ -542,7 +549,7 @@ async function loadSynonyms(){
       <div class="hist-item"><span class="grow"><b>${esc(s.alias)}</b> → ${esc((s.canonicals||[]).join(' + '))}
         ${(s.extra_filters&&s.extra_filters.length)?' <span class="hint">[필터:'+esc(s.extra_filters.join(','))+']</span>':''}
         ${s.verified?' ✅':' <span class="hint">미검증</span>'}</span>
-        <button onclick="delSynonym(${s.id})">🗑</button></div>`).join('') || '<span class="muted">사전이 비어 있음</span>';
+        <button onclick="delSynonym('${esc(s.id)}')">🗑</button></div>`).join('') || '<span class="muted">사전이 비어 있음</span>';
   }catch(e){ document.getElementById('synList').textContent='불러오기 실패'; }
 }
 async function addSynonym(){
@@ -558,7 +565,7 @@ async function addSynonym(){
   else toast('저장 실패');
 }
 async function delSynonym(id){ if(!confirm('삭제할까요?'))return;
-  await fetch('/api/synonyms/'+id,{method:'DELETE'}); loadSynonyms(); }
+  await fetch('/api/synonyms/'+encodeURIComponent(id),{method:'DELETE'}); loadSynonyms(); }
 
 function openAdmin(){
   document.getElementById('ad_login_err').textContent='';
